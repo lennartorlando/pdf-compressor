@@ -8,6 +8,7 @@ import type { CompressionProfileName } from "./profiles.js";
 export function mountApp(root: HTMLElement): void {
   let selectedFile: File | undefined;
   let selectedProfile: CompressionProfileName = "balanced";
+  let currentController: AbortController | undefined;
 
   const title = document.createElement("h1");
   title.textContent = "PDF Compressor";
@@ -23,6 +24,11 @@ export function mountApp(root: HTMLElement): void {
   button.textContent = "Compress";
   button.disabled = true;
 
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "button button--secondary";
+  cancelButton.textContent = "Cancel";
+  cancelButton.disabled = true;
+
   const dropzone = createFileDropzone((file) => {
     selectedFile = file;
     button.disabled = false;
@@ -36,20 +42,39 @@ export function mountApp(root: HTMLElement): void {
 
   button.addEventListener("click", async () => {
     if (!selectedFile) return;
+    currentController = new AbortController();
     button.disabled = true;
+    cancelButton.disabled = false;
     setProgress(progress, "Compressing locally...");
     result.innerHTML = "";
 
-    const response = await compressFile(selectedFile, selectedProfile);
-    if (response.ok && response.summary && response.downloadUrl) {
-      renderResult(result, response.summary, downloadUrl(response.downloadUrl));
-      setProgress(progress, "Done");
-    } else {
-      renderError(result, response.message ?? "Compression failed.");
-      setProgress(progress, "Could not compress this PDF");
+    try {
+      const response = await compressFile(selectedFile, selectedProfile, currentController.signal);
+      if (response.ok && response.summary && response.downloadUrl) {
+        renderResult(result, response.summary, downloadUrl(response.downloadUrl));
+        setProgress(progress, "Done");
+      } else {
+        renderError(result, response.message ?? "Compression failed.");
+        setProgress(progress, "Could not compress this PDF");
+      }
+    } catch (error) {
+      const cancelled = error instanceof DOMException && error.name === "AbortError";
+      renderError(result, cancelled ? "Compression cancelled." : "Compression failed.");
+      setProgress(progress, cancelled ? "Cancelled" : "Could not compress this PDF");
+    } finally {
+      currentController = undefined;
+      button.disabled = false;
+      cancelButton.disabled = true;
     }
-    button.disabled = false;
   });
 
-  root.replaceChildren(title, subtitle, dropzone, profiles, button, progress, result);
+  cancelButton.addEventListener("click", () => {
+    currentController?.abort();
+  });
+
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  actions.append(button, cancelButton);
+
+  root.replaceChildren(title, subtitle, dropzone, profiles, actions, progress, result);
 }

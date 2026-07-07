@@ -11,5 +11,6 @@ describe("web compression flow", () => {
     expect(root.textContent).toContain("Compress PDFs locally");
     expect(root.textContent).toContain("Balanced");
     expect(root.querySelector("button")?.textContent).toBe("Compress");
+    expect(root.textContent).toContain("Cancel");
   });
 });

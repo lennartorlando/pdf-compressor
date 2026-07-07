@@ -25,7 +25,8 @@ export async function compressBufferForRequest(
   body: Buffer,
   profile: CompressionProfileName,
   state: CompressionRouteState,
-  displayName = "input.pdf"
+  displayName = "input.pdf",
+  signal?: AbortSignal
 ): Promise<{ status: number; payload: unknown }> {
   if (!compressionProfiles[profile]) {
     return {
@@ -42,7 +43,7 @@ export async function compressBufferForRequest(
 
   try {
     await writeFile(inputPath, body);
-    const summary = await compressPdf({ inputPath, outputPath, profile });
+    const summary = await compressPdf({ inputPath, outputPath, profile, signal });
     await rm(inputPath, { force: true });
     state.jobs.set(jobId, { id: jobId, dir: jobDir, outputPath, summary });
     return {
@@ -75,10 +76,12 @@ export async function handleCompressionRequest(req: IncomingMessage, res: Server
   if (req.method === "POST" && url.pathname === "/api/compress") {
     const profile = (url.searchParams.get("profile") ?? "balanced") as CompressionProfileName;
     const body = await readRequestBody(req);
+    const controller = new AbortController();
+    req.on("aborted", () => controller.abort());
     const displayName = Array.isArray(req.headers["x-filename"])
       ? req.headers["x-filename"][0]
       : req.headers["x-filename"];
-    const result = await compressBufferForRequest(body, profile, state, displayName ?? "input.pdf");
+    const result = await compressBufferForRequest(body, profile, state, displayName ?? "input.pdf", controller.signal);
     writeJson(res, result.status, result.payload);
     return;
   }
@@ -95,7 +98,12 @@ export async function handleCompressionRequest(req: IncomingMessage, res: Server
       "content-type": "application/pdf",
       "content-disposition": "attachment; filename=\"compressed.pdf\""
     });
-    createReadStream(job.outputPath).pipe(res);
+    const stream = createReadStream(job.outputPath);
+    stream.pipe(res);
+    stream.on("close", () => {
+      state.jobs.delete(job.id);
+      void rm(job.dir, { recursive: true, force: true });
+    });
     return;
   }
 

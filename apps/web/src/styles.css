@@ -101,6 +101,17 @@ h1 {
   cursor: pointer;
 }
 
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.button--secondary {
+  color: #26324a;
+  background: #dfe5f0;
+}
+
 .button:disabled {
   cursor: not-allowed;
   background: #9aa3b5;

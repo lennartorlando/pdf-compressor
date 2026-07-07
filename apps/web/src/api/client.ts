@@ -21,14 +21,15 @@ export interface CompressionResponse {
   message?: string;
 }
 
-export async function compressFile(file: File, profile: CompressionProfileName): Promise<CompressionResponse> {
+export async function compressFile(file: File, profile: CompressionProfileName, signal?: AbortSignal): Promise<CompressionResponse> {
   const response = await fetch(`/api/compress?profile=${encodeURIComponent(profile)}`, {
     method: "POST",
     headers: {
       "content-type": "application/pdf",
       "x-filename": file.name
     },
-    body: await file.arrayBuffer()
+    body: await file.arrayBuffer(),
+    signal
   });
   return response.json() as Promise<CompressionResponse>;
 }
