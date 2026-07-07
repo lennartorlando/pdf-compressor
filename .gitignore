@@ -1,8 +1,10 @@
 .DS_Store
 node_modules/
 dist/
+dist-types/
 build/
 coverage/
+*.tsbuildinfo
 .env
 .env.*
 !.env.example

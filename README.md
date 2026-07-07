@@ -17,6 +17,13 @@ This repository starts as a planning and implementation workspace for a PDF comp
 
 - Implementation plan: [docs/plans/2026-07-06-001-feat-local-pdf-compressor-plan.md](docs/plans/2026-07-06-001-feat-local-pdf-compressor-plan.md)
 
-## Current Status
+## Development
 
-Planning repository. Product implementation has not started yet.
+```bash
+npm install
+npm test
+npm run typecheck
+npm run build
+```
+
+Native compression requires local PDF tools such as `qpdf` and Ghostscript. When they are missing, the app returns a local setup error instead of uploading the PDF elsewhere.

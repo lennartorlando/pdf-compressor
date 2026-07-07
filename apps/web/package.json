@@ -1,0 +1,12 @@
+{
+  "name": "@pdf-compressor/web",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b tsconfig.json && vite build",
+    "dev": "vite --host 127.0.0.1",
+    "test": "vitest run apps/web/test --environment jsdom"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

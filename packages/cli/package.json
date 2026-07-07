@@ -1,0 +1,17 @@
+{
+  "name": "@pdf-compressor/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "pdf-compressor": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "vitest run packages/cli/test"
+  },
+  "dependencies": {
+    "@pdf-compressor/core": "file:../core"
+  }
+}

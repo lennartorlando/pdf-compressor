@@ -1,0 +1,15 @@
+{
+  "name": "@pdf-compressor/local-server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/server.js",
+  "types": "dist/server.d.ts",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "dev": "tsx src/server.ts",
+    "test": "vitest run apps/local-server/test"
+  },
+  "dependencies": {
+    "@pdf-compressor/core": "file:../../packages/core"
+  }
+}
