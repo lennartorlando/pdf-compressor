@@ -1,29 +1,85 @@
 # PDF Compressor
 
-Local-first, open-source PDF compression.
+PDF Compressor ist eine lokale, quelloffene Anwendung zum Verkleinern von PDF-Dateien. Dokumente bleiben auf dem eigenen Rechner; Weboberfläche und CLI verwenden dieselbe Kompressionslogik.
 
-This repository starts as a planning and implementation workspace for a PDF compressor that works like a simple web app but keeps documents on the user's machine. The first product surface is a local web app. A CLI follows so agents and automation can use the same compression engine. A desktop app is intentionally deferred.
+## Status
 
-## Product Direction
+Die erste vollständige Version ist implementiert. Das Repository enthält:
 
-- Local processing by default: no PDF upload to third-party servers.
-- Compression-only scope: reduce PDF file size without becoming a PDF editor.
-- Web app first: browser-based workflow for drag, inspect, compress, and download.
-- CLI second: stable command interface for agents, scripts, and batch jobs.
-- Open source: implementation and compression choices should be auditable.
-- License: AGPL-3.0-or-later.
+- eine lokale Weboberfläche zum Auswählen, Komprimieren und Herunterladen von PDFs,
+- einen nur an `127.0.0.1` gebundenen HTTP-Server,
+- eine CLI für Skripte, Automationen und Agenten,
+- drei Profile: `conservative`, `balanced` und `aggressive`,
+- strukturierte JSON-Ausgabe für maschinelle Verbraucher.
 
-## Planning
+PDF Compressor ist bewusst kein PDF-Editor. Der aktuelle Umfang beschränkt sich auf Kompression.
 
-- Implementation plan: [docs/plans/2026-07-06-001-feat-local-pdf-compressor-plan.md](docs/plans/2026-07-06-001-feat-local-pdf-compressor-plan.md)
+## Voraussetzungen
 
-## Development
+- Node.js und npm
+- [`qpdf`](https://qpdf.sourceforge.io/)
+- [Ghostscript](https://www.ghostscript.com/)
+
+Auf macOS lassen sich die nativen Werkzeuge mit Homebrew installieren:
+
+```bash
+brew install qpdf ghostscript
+```
+
+Fehlen die Werkzeuge, meldet die Anwendung einen lokalen Setup-Fehler. Sie lädt keine Datei ersatzweise zu einem externen Dienst hoch.
+
+## Lokale Web-App
 
 ```bash
 npm install
+npm run build
+npm run dev
+```
+
+Der lokale Server ist anschließend standardmäßig unter `http://127.0.0.1:5174` erreichbar. Mit `PORT` kann ein anderer Port gewählt werden.
+
+## CLI
+
+Nach dem Build:
+
+```bash
+node packages/cli/dist/index.js compress input.pdf \
+  --output output.pdf \
+  --profile balanced
+```
+
+Für Automationen:
+
+```bash
+node packages/cli/dist/index.js compress input.pdf \
+  --output output.pdf \
+  --profile aggressive \
+  --json
+```
+
+Eine vorhandene Ausgabedatei wird nur mit `--overwrite` ersetzt.
+
+## Repository-Struktur
+
+```text
+apps/web/          Browseroberfläche
+apps/local-server/ Lokaler Server und Kompressionsroute
+packages/core/     Validierung, Profile und native Kompression
+packages/cli/      Kommandozeilenoberfläche
+tests/fixtures/    Testdateien
+docs/              Architektur-, Sicherheits- und Datenschutzdokumentation
+```
+
+## Entwicklung
+
+```bash
 npm test
 npm run typecheck
 npm run build
 ```
 
-Native compression requires local PDF tools such as `qpdf` and Ghostscript. When they are missing, the app returns a local setup error instead of uploading the PDF elsewhere.
+Weitere Details stehen in [`docs/privacy.md`](docs/privacy.md), [`docs/security.md`](docs/security.md) und [`docs/architecture`](docs/architecture).
+
+## Lizenz
+
+AGPL-3.0-or-later. Siehe [`LICENSE`](LICENSE).

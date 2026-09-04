@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ideation: PDF Compressor</title>
+  <style>
+    :root { color-scheme: light; --ink:#172231; --muted:#536173; --line:#d7dfe8; --paper:#ffffff; --ground:#f4f7fb; --accent:#126e52; --accent-soft:#e7f5ef; --blue:#1d5f91; --blue-soft:#eaf3fa; --amber:#8a5600; --amber-soft:#fff3db; --red:#9f3434; --red-soft:#fdeeee; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; background:var(--ground); color:var(--ink); font:16px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width:min(920px, calc(100% - 32px)); margin:40px auto 64px; }
+    .panel { background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:28px; }
+    .eyebrow { margin:0 0 8px; color:var(--accent); font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+    h1,h2,h3 { line-height:1.18; letter-spacing:0; }
+    h1 { margin:0; font-size:34px; }
+    h2 { margin:42px 0 14px; font-size:23px; }
+    h3 { margin:0; font-size:20px; }
+    p { max-width:72ch; }
+    .lede { margin:12px 0 0; color:var(--muted); font-size:18px; }
+    .meta,.stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; }
+    .chip { display:inline-flex; align-items:center; min-height:28px; padding:4px 10px; border:1px solid var(--line); border-radius:999px; background:#f8fafc; color:#2f4054; font-size:13px; font-weight:700; }
+    .chip strong { margin-right:5px; }
+    .stat { flex:1 1 155px; padding:16px; border-radius:8px; background:var(--accent-soft); color:#174d3d; }
+    .stat b { display:block; font-size:24px; line-height:1.1; }
+    .stat span { font-size:13px; font-weight:700; }
+    .context { padding:20px; border-radius:8px; background:var(--blue-soft); color:#174666; }
+    .context ul { margin:10px 0 0; padding-left:20px; }
+    .subnav { margin:0 0 20px; padding:16px 18px; border:1px solid var(--line); border-radius:8px; background:#fbfcfe; }
+    .subnav ol { margin:8px 0 0; padding-left:22px; columns:2; }
+    .subnav a { color:var(--blue); text-decoration-thickness:1px; }
+    article.idea { margin:16px 0; padding:22px; border:1px solid var(--line); border-radius:8px; background:var(--paper); }
+    .idea-head { display:flex; align-items:flex-start; gap:12px; }
+    .rank { display:inline-flex; flex:0 0 auto; align-items:center; justify-content:center; width:30px; height:30px; border-radius:999px; background:var(--accent); color:white; font-size:14px; font-weight:800; }
+    .idea p { margin:14px 0; }
+    dl { display:grid; grid-template-columns:150px 1fr; gap:8px 16px; margin:18px 0 0; }
+    dt { color:var(--muted); font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
+    dd { margin:0; }
+    .basis { margin-top:16px; padding:14px; border-radius:8px; background:#f7faf9; color:#25473d; }
+    .basis code { font-weight:800; }
+    .diagram { width:100%; margin:20px 0 4px; padding:12px; border:1px solid var(--line); border-radius:8px; background:#fbfcfe; }
+    .diagram svg { display:block; width:100%; height:auto; }
+    table { width:100%; border-collapse:collapse; background:var(--paper); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    th,td { padding:13px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); }
+    th { background:#f8fafc; font-size:13px; }
+    tr:last-child td { border-bottom:0; }
+    .warning { margin-top:18px; padding:16px; border-radius:8px; background:var(--amber-soft); color:#6c4300; }
+    .refs { margin:0; padding-left:20px; }
+    .refs li { margin:8px 0; }
+    a { color:var(--blue); }
+    footer { margin-top:42px; color:var(--muted); font-size:13px; }
+    @media (max-width:680px) { main { width:min(100% - 24px, 920px); margin-top:12px; } .panel { padding:20px; } h1 { font-size:29px; } .subnav ol { columns:1; } dl { grid-template-columns:1fr; gap:4px; } dd { margin-bottom:10px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="panel">
+      <p class="eyebrow">Product Ideation</p>
+      <h1>Ideation: PDF Compressor</h1>
+      <p class="lede">Sieben Richtungen, die den lokalen Kompressor spuerbar staerker machen, ohne ihn in eine allgemeine PDF-Suite zu verwandeln.</p>
+      <div class="meta">
+        <span class="chip"><strong>Date</strong><time datetime="2026-07-30">2026-07-30</time></span>
+        <span class="chip"><strong>Topic</strong>open-pdf-compressor-opportunities</span>
+        <span class="chip"><strong>Mode</strong>repo-grounded</span>
+      </div>
+      <div class="stats" aria-label="Ideation summary">
+        <div class="stat"><b>14</b><span>raw candidates</span></div>
+        <div class="stat"><b>7</b><span>ranked survivors</span></div>
+        <div class="stat"><b>1</b><span>product boundary: compress only</span></div>
+      </div>
+    </header>
+
+    <section id="grounding-context">
+      <h2>Grounding Context</h2>
+      <div class="context">
+        <strong>Codebase Context</strong>
+        <ul>
+          <li>The app already offers a local, loopback-bound web flow, a shared core, and a JSON-capable CLI.</li>
+          <li>Today, the user picks one PDF and one of three broad profiles. Lossy profiles map directly to Ghostscript presets; conservative uses qpdf structural optimization.</li>
+          <li>The core detects <code>no_gain</code>, but the web route still keeps a candidate result for download. Privacy docs also identify stale temporary outputs as an open follow-up.</li>
+          <li>Native tools are a current setup requirement. The product has no account, telemetry, remote storage, editor, OCR, or desktop packaging.</li>
+          <li>External prior art confirms familiar three-strength and batch flows, while local-first tools differentiate through offline processing and reusable automation.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="topic-axes">
+      <h2>Topic Axes</h2>
+      <p>Decomposition skipped - surprise-me mode.</p>
+    </section>
+
+    <section id="ranked-ideas">
+      <h2>Ranked Ideas</h2>
+      <nav class="subnav" aria-label="Ranked ideas">
+        <strong>Jump to an idea</strong>
+        <ol>
+          <li><a href="#idea-1">Smart compression planner</a></li>
+          <li><a href="#idea-2">No-gain protection</a></li>
+          <li><a href="#idea-3">Quality confidence loop</a></li>
+          <li><a href="#idea-4">Batch workspace</a></li>
+          <li><a href="#idea-5">Agent batch manifest</a></li>
+          <li><a href="#idea-6">Local trust receipt and expiry</a></li>
+          <li><a href="#idea-7">Local readiness doctor</a></li>
+        </ol>
+      </nav>
+
+      <article class="idea" id="idea-1">
+        <div class="idea-head"><span class="rank">1.</span><h3>Smart compression planner</h3></div>
+        <p>Replace the profile-first decision with a locally computed outcome: "email-friendly", "below 10 MB", "upload portal", or "smallest practical file". A preflight identifies likely image-heavy, text-heavy, and already-optimized inputs, proposes a safe path, and tries bounded strategies until it reaches the goal or explains why it cannot.</p>
+        <div class="diagram" aria-label="Conceptual flow for target-aware compression">
+          <svg viewBox="0 0 760 140" role="img" aria-labelledby="planner-title">
+            <title id="planner-title">Local preflight selects bounded compression strategies for a user target</title>
+            <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#536173"/></marker></defs>
+            <rect x="20" y="38" width="140" height="58" rx="8" fill="#eaf3fa" stroke="#1d5f91"/><text x="90" y="64" text-anchor="middle" font-size="15" font-weight="700" fill="#174666">PDF + target</text><text x="90" y="84" text-anchor="middle" font-size="12" fill="#174666">for example 10 MB</text>
+            <path d="M160 67 H230" stroke="#536173" stroke-width="2" marker-end="url(#arrow)"/>
+            <rect x="235" y="38" width="140" height="58" rx="8" fill="#e7f5ef" stroke="#126e52"/><text x="305" y="64" text-anchor="middle" font-size="15" font-weight="700" fill="#174d3d">Local preflight</text><text x="305" y="84" text-anchor="middle" font-size="12" fill="#174d3d">document signals</text>
+            <path d="M375 67 H445" stroke="#536173" stroke-width="2" marker-end="url(#arrow)"/>
+            <rect x="450" y="38" width="140" height="58" rx="8" fill="#fff3db" stroke="#8a5600"/><text x="520" y="64" text-anchor="middle" font-size="15" font-weight="700" fill="#6c4300">Bounded tries</text><text x="520" y="84" text-anchor="middle" font-size="12" fill="#6c4300">safe to stronger</text>
+            <path d="M590 67 H660" stroke="#536173" stroke-width="2" marker-end="url(#arrow)"/>
+            <rect x="665" y="38" width="78" height="58" rx="8" fill="#e7f5ef" stroke="#126e52"/><text x="704" y="64" text-anchor="middle" font-size="14" font-weight="700" fill="#174d3d">Result</text><text x="704" y="84" text-anchor="middle" font-size="12" fill="#174d3d">or limit</text>
+          </svg>
+        </div>
+        <dl><dt>Basis</dt><dd><code>direct:</code> the current UI exposes only three fixed profiles, while the core already reports byte-level outcomes. <code>external:</code> Smallpdf positions compression around three strength levels; Ghostscript documents that presets broadly alter input and recommends individual controls for specific quality needs.</dd><dt>Rationale</dt><dd>People usually have a destination constraint, not a preference for a Ghostscript preset. Turning the request into an outcome makes the app easier to trust and creates a natural foundation for document-aware optimization.</dd><dt>Downsides</dt><dd>Requires input analysis, bounded retry policy, and clear limits to avoid unexpectedly long jobs or excessive quality loss.</dd><dt>Confidence</dt><dd>90%</dd><dt>Complexity</dt><dd>High</dd></dl>
+      </article>
+
+      <article class="idea" id="idea-2">
+        <div class="idea-head"><span class="rank">2.</span><h3>No-gain protection</h3></div>
+        <p>When compression yields an equal or larger file, treat that as a completed decision, not as a downloadable "compressed" result. Preserve the original untouched, explain that it is already optimized or unsuitable for the chosen method, and offer one explicit stronger retry rather than silently producing a worse file.</p>
+        <dl><dt>Basis</dt><dd><code>direct:</code> <code>compressPdf</code> already returns <code>status: "no_gain"</code> and <code>outputSmaller: false</code>, while the web route stores a candidate output anyway.</dd><dt>Rationale</dt><dd>This is a small change with outsized trust value. It makes the product honest at exactly the moment generic compression tools tend to be misleading.</dd><dt>Downsides</dt><dd>Needs a clear retry boundary so the user is not drawn into a confusing loop of increasingly destructive settings.</dd><dt>Confidence</dt><dd>95%</dd><dt>Complexity</dt><dd>Low</dd></dl>
+      </article>
+
+      <article class="idea" id="idea-3">
+        <div class="idea-head"><span class="rank">3.</span><h3>Quality confidence loop</h3></div>
+        <p>For lossy work, locally render representative pages before and after compression, show the pages with the largest visual change, and let the user reject the result. Back this with a small public regression corpus of scan, photo, vector, and text PDFs so profile changes cannot quietly degrade the promise.</p>
+        <dl><dt>Basis</dt><dd><code>direct:</code> aggressive compression is explicitly allowed to reduce visual fidelity and the plan calls out visual smoke checks. <code>external:</code> Ghostscript warns that presets alter input in multiple ways.</dd><dt>Rationale</dt><dd>Quality is the core trade-off of compression. Making it inspectable turns the local-first promise into a verifiable user benefit instead of a claim.</dd><dt>Downsides</dt><dd>Local page rendering and visual comparison add runtime cost; the product needs to choose representative pages carefully for very large PDFs.</dd><dt>Confidence</dt><dd>82%</dd><dt>Complexity</dt><dd>High</dd></dl>
+      </article>
+
+      <article class="idea" id="idea-4">
+        <div class="idea-head"><span class="rank">4.</span><h3>Batch workspace</h3></div>
+        <p>Move from a single upload to a local queue for multiple PDFs. Show each file's outcome, let a user rerun only failures with a different goal, use bounded parallelism, and export completed files together without introducing cloud storage.</p>
+        <dl><dt>Basis</dt><dd><code>direct:</code> batch compression is explicitly deferred in the original product plan. <code>external:</code> PDF24 and Smallpdf position batch workflows as a productivity capability around compression.</dd><dt>Rationale</dt><dd>Batch work is the clearest next user workflow after the single-file experience. It increases usefulness without expanding beyond compression.</dd><dt>Downsides</dt><dd>Requires queue scheduling, disk-space safeguards, cancellation semantics, and a ZIP or folder-save experience that works across browsers.</dd><dt>Confidence</dt><dd>86%</dd><dt>Complexity</dt><dd>High</dd></dl>
+      </article>
+
+      <article class="idea" id="idea-5">
+        <div class="idea-head"><span class="rank">5.</span><h3>Agent batch manifest</h3></div>
+        <p>Give agents and scripts a first-class batch interface: a JSON Lines manifest, dry-run validation, deterministic output paths, bounded concurrency, and one JSON result per input. It should call the shared core directly, never automate the browser.</p>
+        <dl><dt>Basis</dt><dd><code>direct:</code> the CLI already has stable single-file JSON output and uses the same core as the web app.</dd><dt>Rationale</dt><dd>This turns an existing contract into an automation surface that agents can reason about safely, while keeping every document local and every result auditable.</dd><dt>Downsides</dt><dd>Public contract design matters: resume behavior, partial failures, output collisions, and JSON schema versioning must be decided deliberately.</dd><dt>Confidence</dt><dd>88%</dd><dt>Complexity</dt><dd>Medium</dd></dl>
+      </article>
+
+      <article class="idea" id="idea-6">
+        <div class="idea-head"><span class="rank">6.</span><h3>Local trust receipt and automatic expiry</h3></div>
+        <p>Show a compact receipt after each job: loopback-only processing, engine and version, output checksum, and whether the temporary workspace has been cleaned. Add automatic expiry for downloaded or abandoned job results, with no document content or metadata retained in the receipt.</p>
+        <dl><dt>Basis</dt><dd><code>direct:</code> privacy documentation promises local-only processing but notes that stale downloaded results still need automatic expiry. <code>external:</code> local PDF tools compete on the claim that files remain on-device.</dd><dt>Rationale</dt><dd>Privacy is this product's sharpest differentiation. A user-visible, non-invasive receipt makes that promise concrete and audit-friendly.</dd><dt>Downsides</dt><dd>Receipt wording must remain precise so it does not overclaim what the operating system or browser controls.</dd><dt>Confidence</dt><dd>79%</dd><dt>Complexity</dt><dd>Medium</dd></dl>
+      </article>
+
+      <article class="idea" id="idea-7">
+        <div class="idea-head"><span class="rank">7.</span><h3>Local readiness doctor</h3></div>
+        <p>Add <code>pdf-compressor doctor</code> and a matching local setup view that checks qpdf and Ghostscript availability, versions, permissions, and a harmless local test job. It should explain how to fix a machine without uploading a sample PDF or leaving the app.</p>
+        <dl><dt>Basis</dt><dd><code>direct:</code> the repository currently depends on user-installed native tools and reports <code>ENGINE_UNAVAILABLE</code> when they are absent.</dd><dt>Rationale</dt><dd>Local-first software only feels simple when setup failures are self-diagnosing. This reduces support load and makes the web app and CLI more dependable on new machines.</dd><dt>Downsides</dt><dd>Platform-specific installation guidance will need careful maintenance until native binary distribution is decided.</dd><dt>Confidence</dt><dd>84%</dd><dt>Complexity</dt><dd>Medium</dd></dl>
+      </article>
+    </section>
+
+    <section id="rejection-summary">
+      <h2>Rejection Summary</h2>
+      <table>
+        <thead><tr><th>Idea</th><th>Decision</th><th>Reason</th></tr></thead>
+        <tbody>
+          <tr><td>Preflight recommendation</td><td>Merged</td><td>Stronger as part of the smart compression planner than as a separate feature.</td></tr>
+          <tr><td>Document-aware profiles</td><td>Merged</td><td>Its value depends on target-aware planning and belongs in that same direction.</td></tr>
+          <tr><td>Compression explainability panel</td><td>Merged</td><td>Most useful as part of the trust receipt, not as a second result surface.</td></tr>
+          <tr><td>Quality regression corpus</td><td>Merged</td><td>Essential support for the quality confidence loop, but not a standalone product direction.</td></tr>
+          <tr><td>Fast-web-view output</td><td>Deferred</td><td>qpdf linearization is real prior art, but it optimizes loading rather than the primary size-and-quality problem.</td></tr>
+          <tr><td>Saved local presets</td><td>Deferred</td><td>Worth adding only after goals and settings become meaningfully richer than three static profiles.</td></tr>
+          <tr><td>Password-aware local processing</td><td>Rejected</td><td>Useful, but expands the security and key-handling surface before the core compression flow is mature.</td></tr>
+        </tbody>
+      </table>
+      <div class="warning"><strong>Filtering note:</strong> The candidate review was performed in one context because this environment does not expose fresh independent reviewers. The selection is grounded in code and external sources, but lacks that extra adversarial pass.</div>
+    </section>
+
+    <section id="sources">
+      <h2>Sources and References</h2>
+      <ul class="refs">
+        <li><a href="https://github.com/lennartorlando/pdf-compressor/blob/main/apps/web/src/App.ts">Current web workflow</a> and <a href="https://github.com/lennartorlando/pdf-compressor/blob/main/packages/core/src/compress.ts">shared compression core</a>.</li>
+        <li><a href="https://github.com/lennartorlando/pdf-compressor/blob/main/docs/privacy.md">Privacy documentation</a> and <a href="https://github.com/lennartorlando/pdf-compressor/blob/main/docs/plans/2026-07-06-001-feat-local-pdf-compressor-plan.md">original product plan</a>.</li>
+        <li><a href="https://smallpdf.com/compress-pdf">Smallpdf Compress PDF</a> - familiar compression strengths and download workflow.</li>
+        <li><a href="https://tools.pdf24.org/en/creator">PDF24 Creator</a> - offline processing, reusable profiles, command-line and batch context.</li>
+        <li><a href="https://ghostscript.readthedocs.io/en/latest/VectorDevices.html">Ghostscript pdfwrite documentation</a> - preset trade-offs and individual controls.</li>
+        <li><a href="https://qpdf.readthedocs.io/en/stable/">qpdf documentation</a> - validation and linearization capabilities.</li>
+      </ul>
+    </section>
+
+    <footer class="composition-signal">Composed 2026-07-30T11:32:05+0200 by ce-ideate from <code>current PDF Compressor repository and user prompt context</code>.</footer>
+  </main>
+</body>
+</html>
