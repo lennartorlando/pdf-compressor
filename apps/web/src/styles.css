@@ -151,6 +151,260 @@ h1 {
   font-weight: 700;
 }
 
+.button--small {
+  min-height: 36px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+
+.muted {
+  color: #4c5870;
+}
+
+.small {
+  font-size: 13px;
+}
+
+.card {
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid #d9deea;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.card h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 20px;
+  background: #eef1f7;
+  color: #4c5870;
+  font-size: 12px;
+}
+
+/* Page editor: vertical pipeline (Add, Arrange, Export). */
+
+.page-editor {
+  display: grid;
+  gap: 4px;
+}
+
+.page-editor__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.dropzone--small {
+  min-height: 110px;
+  padding: 18px;
+}
+
+.filelist {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.filelist li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #d9deea;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.filelist button {
+  margin-left: auto;
+  border: 1px solid #d9deea;
+  border-radius: 6px;
+  background: #f5f7fb;
+  min-height: 32px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.editor-actions__count {
+  color: #4c5870;
+  font-size: 13px;
+}
+
+.thumb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thumb {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #d9deea;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.thumb--selected {
+  outline: 2px solid #1f7a5c;
+  outline-offset: 1px;
+}
+
+.thumb__select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thumb__caption {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thumb__canvas {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 4px;
+  background: #eef1f7;
+}
+
+.thumb--rot90 .thumb__canvas {
+  transform: rotate(90deg) scale(0.75);
+}
+
+.thumb--rot180 .thumb__canvas {
+  transform: rotate(180deg);
+}
+
+.thumb--rot270 .thumb__canvas {
+  transform: rotate(270deg) scale(0.75);
+}
+
+.thumb__rotation {
+  margin: 0;
+  color: #4c5870;
+  font-size: 12px;
+}
+
+.thumb__controls {
+  display: flex;
+  gap: 4px;
+}
+
+.thumb__controls button {
+  flex: 1;
+  min-height: 30px;
+  border: 1px solid #d9deea;
+  border-radius: 6px;
+  background: #f5f7fb;
+  cursor: pointer;
+}
+
+.export-options {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.export-options__scope {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.export-options__scope label {
+  padding: 10px;
+  border: 1px solid #d9deea;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.export-options__compression {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.export-options__compression legend {
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.export-options__compression label {
+  padding: 10px;
+  border: 1px solid #d9deea;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.export-options__note {
+  margin: 0;
+  color: #4c5870;
+  font-size: 13px;
+}
+
+.exportrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.warn {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #e6cf8f;
+  border-radius: 8px;
+  background: #fdf8e7;
+  color: #5c4a12;
+  font-size: 13px;
+}
+
+.warnlist {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 10px;
+  border: 1px solid #e6cf8f;
+  border-radius: 8px;
+  background: #fdf8e7;
+  color: #5c4a12;
+  font-size: 13px;
+  list-style: none;
+}
+
+.result--inline:empty {
+  display: none;
+}
+
 @media (max-width: 680px) {
   #app {
     margin-top: 24px;

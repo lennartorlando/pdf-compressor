@@ -12,6 +12,26 @@ import { SessionStore, type TokenCheck } from "./session.js";
 const webRoot = resolve(process.cwd(), "apps", "web", "dist");
 export const defaultHost = "127.0.0.1";
 
+/**
+ * Production content security policy for the built app. Scripts and workers
+ * stay local with no inline code or dynamic evaluation, and the page cannot
+ * frame, embed objects, submit forms, or open outbound connections. The
+ * same-origin loopback API and the same-version local worker remain allowed.
+ */
+export const PRODUCTION_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "worker-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data: blob:",
+  "connect-src 'self'",
+  "font-src 'self'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "form-action 'none'",
+  "base-uri 'self'"
+].join("; ");
+
 export interface LocalServerDeps {
   sessions?: SessionStore;
   jobs?: JobManager;
@@ -296,7 +316,11 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse): Promise<v
   try {
     const fileStat = await stat(filePath);
     if (!fileStat.isFile()) throw new Error("Not a file");
-    res.writeHead(200, { "content-type": contentType(filePath) });
+    res.writeHead(200, {
+      "content-type": contentType(filePath),
+      "content-security-policy": PRODUCTION_CSP,
+      "cache-control": "no-store"
+    });
     createReadStream(filePath).pipe(res);
   } catch {
     res.writeHead(404).end("Not found");
@@ -308,11 +332,16 @@ function contentType(filePath: string): string {
     case ".html":
       return "text/html; charset=utf-8";
     case ".js":
+    case ".mjs":
       return "text/javascript; charset=utf-8";
     case ".css":
       return "text/css; charset=utf-8";
     case ".svg":
       return "image/svg+xml";
+    case ".wasm":
+      return "application/wasm";
+    case ".map":
+      return "application/json; charset=utf-8";
     default:
       return "application/octet-stream";
   }
