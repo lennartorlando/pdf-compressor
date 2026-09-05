@@ -129,7 +129,23 @@ async function mountEditor(root: HTMLElement): Promise<void> {
   try {
     const module: PageEditorModule = await import("./components/PageEditor.js");
     if (!root.contains(loading)) return;
-    const editor = module.createPageEditor({ onExit: () => mountCompressor(root) });
+    // Keep the live handle so leaving the editor can release PDF.js
+    // documents, canvases, object URLs, observers, and queued work before
+    // the compressor DOM replaces the editor. Declared before the callback
+    // so onExit never hits a temporal-dead-zone, and cleared before destroy
+    // so a repeated exit cannot destroy twice.
+    let liveEditor: ReturnType<PageEditorModule["createPageEditor"]> | undefined;
+    const handleExit = (): void => {
+      const live = liveEditor;
+      liveEditor = undefined;
+      try {
+        live?.destroy();
+      } finally {
+        mountCompressor(root);
+      }
+    };
+    const editor = module.createPageEditor({ onExit: handleExit });
+    liveEditor = editor;
     root.replaceChildren(editor.element);
   } catch {
     renderError(root, "The page editor could not be opened. Go back and try again.");
