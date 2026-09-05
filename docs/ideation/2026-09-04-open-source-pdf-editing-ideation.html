@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ideation: Open-Source-Bausteine für PDF-Bearbeitung</title>
+  <style>
+    :root { color-scheme: light; --ink:#172231; --muted:#536173; --line:#d7dfe8; --paper:#ffffff; --ground:#f4f7fb; --accent:#126e52; --accent-soft:#e7f5ef; --blue:#1d5f91; --blue-soft:#eaf3fa; --amber:#7a4b00; --amber-soft:#fff3db; --red:#8f3030; --red-soft:#fdeeee; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; background:var(--ground); color:var(--ink); font:15px/1.58 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width:min(960px, calc(100% - 32px)); margin:36px auto 64px; }
+    header,.panel,article { background:var(--paper); border:1px solid var(--line); border-radius:10px; }
+    header { padding:30px; }
+    .eyebrow { margin:0 0 8px; color:var(--accent); font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+    h1,h2,h3 { line-height:1.2; letter-spacing:-.01em; }
+    h1 { margin:0; font-size:32px; }
+    h2 { margin:42px 0 14px; font-size:23px; }
+    h3 { margin:0; font-size:20px; }
+    p { max-width:76ch; }
+    .lede { margin:12px 0 0; color:var(--muted); font-size:18px; }
+    .meta,.stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; }
+    .chip { display:inline-flex; align-items:center; min-height:28px; padding:4px 10px; border:1px solid var(--line); border-radius:999px; background:#f8fafc; color:#2f4054; font-size:13px; font-weight:700; }
+    .chip strong { margin-right:5px; }
+    .stat { flex:1 1 165px; padding:16px; border-radius:8px; background:var(--accent-soft); color:#174d3d; }
+    .stat b { display:block; font-size:24px; line-height:1.1; }
+    .stat span { font-size:13px; font-weight:700; }
+    .panel { padding:22px; }
+    .context { background:var(--blue-soft); color:#174666; }
+    .context ul { margin:10px 0 0; padding-left:20px; }
+    .warning { margin-top:16px; background:var(--amber-soft); color:#654000; }
+    .subnav { margin:0 0 18px; padding:18px 20px; }
+    .subnav ol { margin:8px 0 0; padding-left:22px; columns:2; }
+    article.idea { margin:16px 0; padding:24px; }
+    .idea-head { display:flex; align-items:flex-start; gap:12px; }
+    .rank { display:inline-flex; flex:0 0 auto; align-items:center; justify-content:center; width:31px; height:31px; border-radius:999px; background:var(--accent); color:#fff; font-size:14px; font-weight:800; }
+    dl { display:grid; grid-template-columns:125px 1fr; gap:8px 16px; margin:18px 0 0; }
+    dt { color:var(--muted); font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
+    dd { margin:0; }
+    .verdict { margin-top:16px; padding:14px 16px; border-radius:8px; background:#f7faf9; color:#25473d; }
+    .diagram { margin:20px 0 4px; padding:14px; border:1px solid var(--line); border-radius:8px; background:#fbfcfe; }
+    .diagram svg { display:block; width:100%; height:auto; }
+    table { width:100%; border-collapse:collapse; background:var(--paper); border:1px solid var(--line); }
+    th,td { padding:12px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); }
+    th { background:#f8fafc; font-size:13px; }
+    tr:last-child td { border-bottom:0; }
+    a { color:var(--blue); }
+    .refs { margin:0; padding-left:20px; }
+    .refs li { margin:8px 0; }
+    footer { margin-top:42px; color:var(--muted); font-size:13px; }
+    @media (max-width:680px) { main { width:min(100% - 24px, 960px); margin-top:12px; } header,.panel,article.idea { padding:20px; } h1 { font-size:28px; } .subnav ol { columns:1; } dl { grid-template-columns:1fr; gap:4px; } dd { margin-bottom:9px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Product Ideation</p>
+      <h1>Open-Source-Bausteine für PDF-Bearbeitung</h1>
+      <p class="lede">Welche Projekte sich sinnvoll in den lokalen PDF Compressor integrieren lassen, ohne einen kompletten Editor zu forken.</p>
+      <div class="meta">
+        <span class="chip"><strong>Datum</strong><time datetime="2026-09-04">2026-09-04</time></span>
+        <span class="chip"><strong>Thema</strong>open-source-pdf-editing</span>
+        <span class="chip"><strong>Fokus</strong>Repos und wiederverwendbare Teile</span>
+        <span class="chip"><strong>Modus</strong>repo-grounded</span>
+      </div>
+      <div class="stats" aria-label="Ideation summary">
+        <div class="stat"><b>43</b><span>Rohkandidaten</span></div>
+        <div class="stat"><b>5</b><span>belastbare Richtungen</span></div>
+        <div class="stat"><b>3</b><span>Bewertungsachsen</span></div>
+      </div>
+    </header>
+
+    <section id="grounding-context">
+      <h2>Grounding Context</h2>
+      <div class="panel context">
+        <p><strong>Codebase Context</strong></p>
+        <ul>
+          <li><code>main</code> enthält derzeit nur den Planungsstand. Die implementierte App liegt auf <code>origin/feat/local-pdf-compressor</code>.</li>
+          <li>Die App ist ein TypeScript-, Vite- und Node-Monorepo. Web und CLI verwenden dieselbe Core-Schicht.</li>
+          <li>qpdf übernimmt strukturelle Optimierung. Ghostscript übernimmt verlustbehaftete Kompression. Beide liegen hinter Engine-Adaptern.</li>
+          <li>Die Sicherheitsgrenze ist lokal: Loopback-Server, temporäre Jobs, kein Überschreiben der Quelle und kein Cloud-Fallback.</li>
+          <li>Eine Vorschau, ein Seitenmodell, Undo, Annotationen und Bearbeitungsoperationen fehlen vollständig.</li>
+          <li>Es gibt keine früheren Repo-Learnings unter <code>docs/solutions/</code>.</li>
+        </ul>
+      </div>
+      <div class="panel warning">
+        <strong>Produktgrenze.</strong> Der ursprüngliche Plan hat allgemeine PDF-Bearbeitung ausdrücklich vertagt. Die Aufnahme einer Bearbeitungsfunktion ist deshalb eine bewusste Produktentscheidung, kein kleiner technischer Zusatz.
+      </div>
+    </section>
+
+    <section id="topic-axes">
+      <h2>Topic Axes</h2>
+      <ol>
+        <li>Browser-Workspace und Bearbeitungsinteraktion</li>
+        <li>Dokumentmutation und Seitenoperationen</li>
+        <li>Vertrauen, Lizenzierung und Distribution</li>
+      </ol>
+    </section>
+
+    <section id="ranked-ideas">
+      <h2>Ranked Ideas</h2>
+      <nav class="panel subnav" aria-label="Ranked ideas">
+        <strong>Direkt zu einer Richtung</strong>
+        <ol>
+          <li><a href="#idea-1">EmbedPDF als Workspace</a></li>
+          <li><a href="#idea-2">Page Surgery mit qpdf</a></li>
+          <li><a href="#idea-3">LibPDF Capability Spike</a></li>
+          <li><a href="#idea-4">Lokale OCR mit OCRmyPDF</a></li>
+          <li><a href="#idea-5">Overlay Studio mit pdfme</a></li>
+        </ol>
+      </nav>
+
+      <article class="idea" id="idea-1">
+        <div class="idea-head"><span class="rank">1</span><h3>EmbedPDF als ephemeraler Bearbeitungs-Workspace</h3></div>
+        <p>Übernehmt gezielt die Apache-2.0-Pakete für Viewer, Thumbnails, Annotationen, History und Export. Der Browser zeigt und sammelt Änderungen, die Quelle bleibt unverändert und nur ein expliziter Export erzeugt eine neue PDF. Der separat lizenzierte CloudPDF-Server gehört nicht in die App.</p>
+        <div class="diagram" aria-label="Conceptual integration flow">
+          <svg viewBox="0 0 820 170" role="img" aria-labelledby="flow-title flow-desc">
+            <title id="flow-title">Lokaler Bearbeitungsfluss</title>
+            <desc id="flow-desc">Die unveränderte Quelldatei wird im EmbedPDF Workspace angezeigt. Gewählte Operationen gehen an die lokale Core-Schicht, die qpdf, LibPDF oder andere lokale Engines nutzt und eine neue Datei exportiert.</desc>
+            <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#536173"/></marker></defs>
+            <rect x="20" y="48" width="150" height="70" rx="8" fill="#eaf3fa" stroke="#8fb4cf"/><text x="95" y="76" text-anchor="middle" font-size="14" font-weight="700" fill="#174666">Original-PDF</text><text x="95" y="98" text-anchor="middle" font-size="12" fill="#174666">unverändert</text>
+            <line x1="170" y1="83" x2="245" y2="83" stroke="#536173" stroke-width="2" marker-end="url(#arrow)"/>
+            <rect x="255" y="30" width="210" height="106" rx="8" fill="#e7f5ef" stroke="#83bca9"/><text x="360" y="62" text-anchor="middle" font-size="14" font-weight="700" fill="#174d3d">EmbedPDF Workspace</text><text x="360" y="84" text-anchor="middle" font-size="12" fill="#174d3d">Vorschau und Interaktion</text><text x="360" y="104" text-anchor="middle" font-size="12" fill="#174d3d">kein persistentes Projekt</text>
+            <line x1="465" y1="83" x2="540" y2="83" stroke="#536173" stroke-width="2" marker-end="url(#arrow)"/>
+            <rect x="550" y="30" width="250" height="106" rx="8" fill="#fff3db" stroke="#d0ab62"/><text x="675" y="57" text-anchor="middle" font-size="14" font-weight="700" fill="#654000">Lokale Core-Schicht</text><text x="675" y="80" text-anchor="middle" font-size="12" fill="#654000">qpdf, LibPDF, OCRmyPDF</text><text x="675" y="101" text-anchor="middle" font-size="12" fill="#654000">neue Datei und Ergebnisbeleg</text></svg>
+        </div>
+        <dl><dt>Achse</dt><dd>Browser-Workspace und Bearbeitungsinteraktion</dd><dt>Basis</dt><dd><strong>external:</strong> EmbedPDF stellt modulare Viewer- und Editor-Pakete bereit. Laut offizieller Lizenzmatrix stehen die <code>@embedpdf/*</code>-Pakete unter Apache-2.0. <strong>direct:</strong> Die App besitzt bisher weder Vorschau noch Seitenmodell.</dd><dt>Rationale</dt><dd>Es ist der schnellste Weg zu einer brauchbaren lokalen Arbeitsfläche und vermeidet einen kompletten Produkt-Fork.</dd><dt>Nachteile</dt><dd>Junges, schnell veränderliches Paket-Ökosystem, WASM-Gewicht und Third-Party-Notices. Der Workspace erweitert die bisherige Produktgrenze deutlich.</dd><dt>Confidence</dt><dd>90%</dd><dt>Complexity</dt><dd>Medium</dd></dl>
+        <div class="verdict"><strong>Mein Take:</strong> bester Ausgangspunkt. Erst als isolierten technischen Prototyp gegen echte PDFs prüfen, dann die Produktgrenze festlegen.</div>
+      </article>
+
+      <article class="idea" id="idea-2">
+        <div class="idea-head"><span class="rank">2</span><h3>Page Surgery mit dem vorhandenen qpdf</h3></div>
+        <p>Beginnt nicht mit freier Textbearbeitung. Baut eine klar begrenzte Seitenansicht für Drehen, Umsortieren, Löschen, Extrahieren und Zusammenführen. EmbedPDF kann Thumbnails und Auswahl liefern, qpdf führt die Operationen lokal aus und schreibt immer eine neue Datei.</p>
+        <dl><dt>Achse</dt><dd>Dokumentmutation und Seitenoperationen</dd><dt>Basis</dt><dd><strong>direct:</strong> qpdf ist bereits als strukturelle Engine integriert. <strong>external:</strong> qpdf unterstützt Page Selection, Merge, Rotation sowie Overlay und Underlay.</dd><dt>Rationale</dt><dd>Diese Operationen sind nützlich, gut testbar und deutlich weniger fragil als das Verändern bestehenden Fließtexts.</dd><dt>Nachteile</dt><dd>Die Core-Schicht braucht neue Operationsverträge. Signierte Dokumente und AcroForms benötigen vor jeder Mutation eine klare Sperr- oder Warnregel.</dd><dt>Confidence</dt><dd>88%</dd><dt>Complexity</dt><dd>Medium</dd></dl>
+      </article>
+
+      <article class="idea" id="idea-3">
+        <div class="idea-head"><span class="rank">3</span><h3>LibPDF als begrenzter Capability Spike</h3></div>
+        <p>Testet LibPDF in einem Wegwerf-Prototyp gegen einen realistischen PDF-Korpus. Im Fokus stehen AcroForms, Erkennung digitaler Signaturen, inkrementelles Speichern, Merge und Split. Erst wenn die Ergebnisse belastbar sind, sollte die Bibliothek Teil der eigentlichen Architektur werden.</p>
+        <dl><dt>Achse</dt><dd>Vertrauen, Lizenzierung und Distribution</dd><dt>Basis</dt><dd><strong>external:</strong> LibPDF ist MIT-lizenziert, TypeScript-first und wird von Documenso produktiv eingesetzt. Es unterstützt Formulare, PAdES, Verschlüsselung, inkrementelle Saves und Textauslesung. Das Projekt bezeichnet sich selbst als Beta.</dd><dt>Rationale</dt><dd>LibPDF passt technisch viel besser zur bestehenden Codebasis als Java-, Go- oder Python-Komponenten und könnte mehrere Lücken mit einer Bibliothek schließen.</dd><dt>Nachteile</dt><dd>API-Änderungen zwischen Minor-Versionen sind angekündigt. Rendering fehlt. Signaturprüfung ist laut Projekt noch nicht implementiert.</dd><dt>Confidence</dt><dd>78%</dd><dt>Complexity</dt><dd>Medium</dd></dl>
+      </article>
+
+      <article class="idea" id="idea-4">
+        <div class="idea-head"><span class="rank">4</span><h3>Lokale OCR als eigener Arbeitsgang</h3></div>
+        <p>Verwendet OCRmyPDF zusammen mit Tesseract, um gescannte PDFs durchsuchbar zu machen. OCR bleibt ein eigener Arbeitsgang mit Sprachauswahl und Qualitätswarnungen, nicht eine versteckte Nebenwirkung der Kompression.</p>
+        <dl><dt>Achse</dt><dd>Dokumentmutation und Seitenoperationen</dd><dt>Basis</dt><dd><strong>external:</strong> OCRmyPDF erzeugt mit Tesseract eine durchsuchbare Textschicht und ist für vollständige PDF-Ausgabe geeigneter als rohe Browser-OCR. <strong>direct:</strong> Die App kann lokale Prozesse bereits isoliert und abbrechbar ausführen.</dd><dt>Rationale</dt><dd>Scans sind genau die Dokumente, die viele Nutzer ungern an einen Cloud-Dienst senden. Der lokale Ansatz hat hier echten Wert.</dd><dt>Nachteile</dt><dd>Python, Tesseract, Sprachpakete und weitere native Abhängigkeiten erhöhen Setup und Distribution deutlich.</dd><dt>Confidence</dt><dd>84%</dd><dt>Complexity</dt><dd>High</dd></dl>
+      </article>
+
+      <article class="idea" id="idea-5">
+        <div class="idea-head"><span class="rank">5</span><h3>Overlay Studio mit pdfme</h3></div>
+        <p>Nutzt pdfme für wiederverwendbare Overlays auf einer festen Basis-PDF, etwa Stempel, Freigabeblöcke, strukturierte Felder, Bilder oder Deckblätter. Das Produkt darf dies nicht als freie Bearbeitung bestehenden Textes verkaufen.</p>
+        <dl><dt>Achse</dt><dd>Browser-Workspace und Bearbeitungsinteraktion</dd><dt>Basis</dt><dd><strong>external:</strong> pdfme ist MIT-lizenziert, aktiv gepflegt und bietet einen TypeScript-basierten WYSIWYG-Designer mit Base-PDF und JSON-Schemas.</dd><dt>Rationale</dt><dd>Viele geschäftliche Bearbeitungen sind eigentlich Ergänzungen. Ein explizites Overlay-Modell ist reproduzierbar und kann später dieselben Vorlagen in Web und CLI verwenden.</dd><dt>Nachteile</dt><dd>Der Designer bringt eine eigene UI-Logik mit. Er löst weder beliebige Textkorrekturen noch echte Redaction.</dd><dt>Confidence</dt><dd>82%</dd><dt>Complexity</dt><dd>Medium</dd></dl>
+      </article>
+    </section>
+
+    <section id="rejection-summary">
+      <h2>Rejection Summary</h2>
+      <table>
+        <thead><tr><th>Idee oder Projekt</th><th>Entscheidung</th><th>Grund</th></tr></thead>
+        <tbody>
+          <tr><td>MuPDF.js als sofortige Haupt-Engine</td><td>Vertagt</td><td>Technisch stark und AGPL-kompatibel, aber schwerer als nötig. Für Redaction wäre zuerst ein eigener Security- und Verifikationsentwurf nötig.</td></tr>
+          <tr><td>PDF.js als Editor-Grundlage</td><td>Zusammengeführt</td><td>Sehr gute Rendering-Basis, aber die Editor-APIs sind weniger stabil. EmbedPDF bietet den vollständigeren modularen Workspace.</td></tr>
+          <tr><td>pdf-lib als Fundament</td><td>Abgelehnt</td><td>Nützlich für kleine Hilfsoperationen, aber keine normale Textbearbeitung und ein alter stabiler Release.</td></tr>
+          <tr><td>pdfcpu</td><td>Vertagt</td><td>Aktiv und funktionsreich, dupliziert aber qpdf und fügt einen weiteren Go-Binary hinzu.</td></tr>
+          <tr><td>Stirling-PDF oder ONLYOFFICE forken</td><td>Abgelehnt</td><td>Zu große Produkt- und Laufzeitarchitektur. Stirling hat zusätzlich verzeichnisabhängige Lizenzzonen.</td></tr>
+          <tr><td>PDF Editor Offline übernehmen</td><td>Abgelehnt</td><td>Sehr junges Projekt mit kaum Adoption. Gut als UX-Referenz, nicht als Abhängigkeit.</td></tr>
+          <tr><td>True Redaction sofort anbieten</td><td>Abgelehnt</td><td>Der Gegencheck hat die vorgeschlagene reine Textextraktionsprüfung als unzureichend verworfen. Sichtbares Schwärzen ist kein Beweis für sichere Entfernung.</td></tr>
+          <tr><td>Removal-first Cleanup</td><td>Abgelehnt</td><td>Das Entfernen von Annotationen oder Formularinhalten kann Dokumente beschädigen. Ein sicherer Kompressionsgewinn ist nicht belegt.</td></tr>
+          <tr><td>Universelles Operation-Pack-System</td><td>Abgelehnt</td><td>Aktuell eine vorzeitige Abstraktion ohne konkrete zweite Implementierung oder stabilen Erweiterungsvertrag.</td></tr>
+          <tr><td>Persistente Varianten und Job-Historie</td><td>Abgelehnt</td><td>Passt nicht zum aktuellen ephemeren Datenschutzmodell und benötigt erst eine eigene Retention-Entscheidung.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="sources">
+      <h2>Sources and References</h2>
+      <ul class="refs">
+        <li><a href="https://github.com/embedpdf/embed-pdf-viewer">EmbedPDF repository</a> und <a href="https://raw.githubusercontent.com/embedpdf/embed-pdf-viewer/main/LICENSING.md">offizielle Lizenzmatrix</a></li>
+        <li><a href="https://github.com/LibPDF-js/core">LibPDF</a></li>
+        <li><a href="https://github.com/ArtifexSoftware/mupdf.js">MuPDF.js</a></li>
+        <li><a href="https://github.com/mozilla/pdf.js">PDF.js</a></li>
+        <li><a href="https://github.com/pdfme/pdfme">pdfme</a></li>
+        <li><a href="https://github.com/Hopding/pdf-lib">pdf-lib</a></li>
+        <li><a href="https://qpdf.readthedocs.io/en/latest/cli.html">qpdf CLI documentation</a></li>
+        <li><a href="https://github.com/OCRmyPDF/OCRmyPDF">OCRmyPDF</a> und <a href="https://github.com/tesseract-ocr/tesseract">Tesseract</a></li>
+        <li><a href="https://github.com/pdfcpu/pdfcpu">pdfcpu</a></li>
+        <li><a href="https://github.com/Stirling-Tools/Stirling-PDF">Stirling-PDF</a> und <a href="https://raw.githubusercontent.com/Stirling-Tools/Stirling-PDF/main/LICENSE">Lizenzaufteilung</a></li>
+        <li><a href="https://github.com/OthmaneBlial/pdf-editor-offline">PDF Editor Offline</a></li>
+      </ul>
+    </section>
+
+    <footer class="composition-signal">Composed 2026-09-04T21:16:35+02:00 by ce-ideate from <code>current repository, origin/feat/local-pdf-compressor, and official upstream sources</code></footer>
+  </main>
+</body>
+</html>
