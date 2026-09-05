@@ -1,4 +1,5 @@
-import { isCompressionError, type CompressionSummary } from "@pdf-compressor/core";
+import { isCompressionError } from "@pdf-compressor/core";
+import { PageManifestError } from "@pdf-compressor/core/page-manifest";
 
 export const exitCodes = {
   success: 0,
@@ -14,7 +15,7 @@ export interface CliResult {
   stderr: string;
 }
 
-export function formatJsonSuccess(summary: CompressionSummary): string {
+export function formatJsonSuccess(summary: object): string {
   return `${JSON.stringify({
     ok: true,
     ...summary
@@ -29,6 +30,13 @@ export function formatJsonError(error: unknown): string {
       message: error.message
     })}\n`;
   }
+  if (error instanceof PageManifestError) {
+    return `${JSON.stringify({
+      ok: false,
+      code: error.code,
+      message: error.message
+    })}\n`;
+  }
   return `${JSON.stringify({
     ok: false,
     code: "UNKNOWN",
@@ -37,9 +45,14 @@ export function formatJsonError(error: unknown): string {
 }
 
 export function exitCodeFor(error: unknown): number {
+  if (error instanceof PageManifestError) return exitCodes.validationFailure;
   if (!isCompressionError(error)) return exitCodes.compressionFailure;
-  if (error.code === "JOB_CANCELLED") return exitCodes.cancelled;
-  if (error.code.startsWith("INPUT_") || error.code.startsWith("OUTPUT_")) {
+  if (error.code === "JOB_CANCELLED" || error.code === "JOB_TIMEOUT") return exitCodes.cancelled;
+  if (
+    error.code.startsWith("INPUT_") ||
+    error.code.startsWith("OUTPUT_") ||
+    error.code.startsWith("MANIFEST_")
+  ) {
     return exitCodes.validationFailure;
   }
   return exitCodes.compressionFailure;
