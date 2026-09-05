@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./page-manifest": {
+      "types": "./dist/page-manifest.d.ts",
+      "import": "./dist/page-manifest.js"
     }
   },
   "scripts": {

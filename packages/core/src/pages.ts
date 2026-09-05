@@ -1,0 +1,371 @@
+import { createHash, randomUUID } from "node:crypto";
+import { copyFile, readFile, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { CompressionError } from "./errors.js";
+import {
+  GHOSTSCRIPT_SECURITY_FLOOR,
+  QPDF_SECURITY_FLOOR,
+  assertNativeFloor,
+  getGhostscriptVersion,
+  getQpdfVersion,
+  inspectPdfSource,
+  publishNoClobber,
+  runQpdfAssemblyMutation,
+  validatePdfArtifact,
+  type CompatWarningKind,
+  type NativeRunner,
+  type PageGroup,
+  type PdfInspection,
+  defaultNativeRunner
+} from "./engines/qpdf-pages.js";
+import { ghostscriptArgs } from "./engines/ghostscript.js";
+import { getCompressionProfile, type CompressionProfileName } from "./profiles.js";
+import { createTempWorkspace } from "./temp-workspace.js";
+import { assertFreshDestination, validatePdfInput } from "./validation.js";
+import type { PageManifest, PageRotation } from "./page-manifest.js";
+
+/** Initial Safety Limits: maximum output pages per export. */
+export const MAX_OUTPUT_PAGES = 500;
+/** Initial Safety Limits: native export runtime budget. */
+export const DEFAULT_EXPORT_TIMEOUT_MS = 120_000;
+
+export interface PageSourceBinding {
+  /** Opaque invocation-local id; matches manifest entries. */
+  id: string;
+  /** Absolute local path of the source PDF. */
+  path: string;
+}
+
+export interface AssemblePagesOptions {
+  sources: readonly PageSourceBinding[];
+  /** Already shape-parsed manifest; semantic checks run here against inspection. */
+  manifest: PageManifest;
+  destinationPath: string;
+  /** Existing Ghostscript compression profile, applied only after assembly. */
+  compression?: CompressionProfileName | null;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  /** Injectable native runner (tests count calls or simulate failures). */
+  run?: NativeRunner;
+}
+
+export interface AssemblySummary {
+  status: "success" | "no_gain";
+  outputPath: string;
+  pageCount: number;
+  outputBytes: number;
+  engine: "qpdf" | "ghostscript";
+  qpdfVersion: string;
+  ghostscriptVersion?: string;
+  warnings: string[];
+  compatWarnings: CompatWarningKind[];
+  /** sha256 per source id, proving inputs were read (never rewritten). */
+  sourceHashes: Record<string, string>;
+}
+
+export interface InspectSourcesOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  run?: NativeRunner;
+}
+
+function runnerOf(options: { run?: NativeRunner }): NativeRunner {
+  return options.run ?? defaultNativeRunner;
+}
+
+function callOptions(options: AssemblePagesOptions | InspectSourcesOptions): {
+  run: NativeRunner;
+  signal?: AbortSignal;
+  timeoutMs: number;
+} {
+  return {
+    run: runnerOf(options),
+    signal: options.signal,
+    timeoutMs: options.timeoutMs ?? DEFAULT_EXPORT_TIMEOUT_MS
+  };
+}
+
+function assertNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new CompressionError("JOB_CANCELLED", "Page assembly was cancelled.");
+  }
+}
+
+/** Duplicate and malformed source ids fail before any native work. */
+export function normalizeBindings(sources: readonly PageSourceBinding[]): Map<string, string> {
+  const bound = new Map<string, string>();
+  for (const source of sources) {
+    if (typeof source.id !== "string" || source.id.length === 0 || source.id.length > 64) {
+      throw new CompressionError("MANIFEST_INVALID", "Every source binding needs a 1-64 character id.");
+    }
+    if (bound.has(source.id)) {
+      throw new CompressionError("MANIFEST_DUPLICATE_SOURCE", `Duplicate source id "${source.id}".`, {
+        sourceId: source.id
+      });
+    }
+    if (typeof source.path !== "string" || source.path.length === 0) {
+      throw new CompressionError("MANIFEST_INVALID", `Source "${source.id}" needs a file path.`);
+    }
+    bound.set(source.id, source.path);
+  }
+  return bound;
+}
+
+function assertManifestSemantics(manifest: PageManifest, bound: Map<string, string>): void {
+  if (!manifest || !Array.isArray(manifest.pages) || manifest.pages.length === 0) {
+    throw new CompressionError("MANIFEST_EMPTY", "The page manifest describes no output pages.");
+  }
+  if (manifest.pages.length > MAX_OUTPUT_PAGES) {
+    throw new CompressionError(
+      "OUTPUT_PAGE_LIMIT_EXCEEDED",
+      `The manifest describes ${manifest.pages.length} pages, above the ${MAX_OUTPUT_PAGES} page cap.`,
+      { pageCount: manifest.pages.length, cap: MAX_OUTPUT_PAGES }
+    );
+  }
+  for (const entry of manifest.pages) {
+    if (!bound.has(entry.sourceId)) {
+      throw new CompressionError("MANIFEST_UNKNOWN_SOURCE", `Manifest references unknown source "${entry.sourceId}".`, {
+        sourceId: entry.sourceId
+      });
+    }
+    if (!Number.isInteger(entry.page) || entry.page < 1) {
+      throw new CompressionError("MANIFEST_INVALID_PAGE", `Invalid page number ${String(entry.page)}.`, {
+        sourceId: entry.sourceId
+      });
+    }
+    const rotate: number = entry.rotate ?? 0;
+    if (rotate !== 0 && rotate !== 90 && rotate !== 180 && rotate !== 270) {
+      throw new CompressionError(
+        "MANIFEST_INVALID_ROTATION",
+        `Invalid rotation ${String(entry.rotate)} for source "${entry.sourceId}".`,
+        { sourceId: entry.sourceId }
+      );
+    }
+  }
+}
+
+function assertPageRanges(
+  manifest: PageManifest,
+  inspections: Map<string, PdfInspection>
+): void {
+  for (const entry of manifest.pages) {
+    const inspection = inspections.get(entry.sourceId);
+    if (!inspection) continue;
+    if (entry.page > inspection.pageCount) {
+      throw new CompressionError(
+        "MANIFEST_PAGE_OUT_OF_RANGE",
+        `Source "${entry.sourceId}" has ${inspection.pageCount} pages; page ${entry.page} is out of range.`,
+        { sourceId: entry.sourceId, page: entry.page, pageCount: inspection.pageCount }
+      );
+    }
+  }
+}
+
+async function sha256Of(path: string): Promise<string> {
+  const bytes = await readFile(path);
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Shared inspect primitive for web and CLI: read-only qpdf inspection of
+ * every bound source, with blocked-content checks but no manifest coupling.
+ */
+export async function inspectSources(
+  sources: readonly PageSourceBinding[],
+  options: InspectSourcesOptions = {}
+): Promise<PdfInspection[]> {
+  assertNotAborted(options.signal);
+  normalizeBindings(sources);
+  const calls = callOptions(options);
+  const qpdfVersion = await getQpdfVersion(calls);
+  assertNativeFloor("qpdf", qpdfVersion, QPDF_SECURITY_FLOOR);
+  const inspections: PdfInspection[] = [];
+  for (const source of sources) {
+    await validatePdfInput(source.path);
+    const inspection = await inspectPdfSource(source.path, calls);
+    inspections.push({ ...inspection, path: source.path });
+  }
+  return inspections;
+}
+
+function buildGroups(manifest: PageManifest, bound: Map<string, string>): PageGroup[] {
+  const groups: PageGroup[] = [];
+  for (const entry of manifest.pages) {
+    const path = bound.get(entry.sourceId);
+    if (!path) continue;
+    const last = groups[groups.length - 1];
+    if (last && last.path === path) {
+      last.range += `,${entry.page}`;
+    } else {
+      groups.push({ path, range: String(entry.page) });
+    }
+  }
+  return groups;
+}
+
+function buildRotationRanges(manifest: PageManifest): Partial<Record<90 | 180 | 270, string[]>> {
+  const positions: Partial<Record<90 | 180 | 270, number[]>> = {};
+  manifest.pages.forEach((entry, index) => {
+    const rotate = (entry.rotate ?? 0) as PageRotation;
+    if (rotate === 0) return;
+    const list = positions[rotate] ?? [];
+    list.push(index + 1);
+    positions[rotate] = list;
+  });
+  const ranges: Partial<Record<90 | 180 | 270, string[]>> = {};
+  for (const angle of [90, 180, 270] as const) {
+    if (positions[angle]) ranges[angle] = [positions[angle].join(",")];
+  }
+  return ranges;
+}
+
+function union<T>(lists: T[][]): T[] {
+  const seen = new Set<T>();
+  for (const list of lists) for (const item of list) seen.add(item);
+  return [...seen];
+}
+
+/**
+ * Assemble an ordered page manifest into a new validated PDF with exactly
+ * one qpdf page mutation, then optionally a Ghostscript candidate that only
+ * wins when smaller and valid. Sources are only read; the destination is
+ * published without clobbering; intermediates are always removed.
+ */
+export async function assemblePages(options: AssemblePagesOptions): Promise<AssemblySummary> {
+  assertNotAborted(options.signal);
+  const bound = normalizeBindings(options.sources);
+  assertManifestSemantics(options.manifest, bound);
+  const sourcePaths = options.sources.map((source) => source.path);
+  await assertFreshDestination(options.destinationPath, sourcePaths);
+
+  const calls = callOptions(options);
+  const qpdfVersion = await getQpdfVersion(calls);
+  assertNativeFloor("qpdf", qpdfVersion, QPDF_SECURITY_FLOOR);
+
+  for (const source of options.sources) {
+    await validatePdfInput(source.path);
+  }
+  const sourceHashes: Record<string, string> = {};
+  for (const source of options.sources) {
+    sourceHashes[source.id] = await sha256Of(source.path);
+  }
+
+  const inspections = new Map<string, PdfInspection>();
+  const inspectionWarnings: string[] = [];
+  for (const source of options.sources) {
+    const inspection = await inspectPdfSource(source.path, calls);
+    if (inspection.signed) {
+      throw new CompressionError("INPUT_SIGNED", `Source "${source.id}" carries a digital signature.`, {
+        sourceId: source.id,
+        inputPath: source.path
+      });
+    }
+    if (inspection.activeContent.length > 0) {
+      throw new CompressionError(
+        "INPUT_HAS_ACTIVE_CONTENT",
+        `Source "${source.id}" contains blocked active content (${inspection.activeContent.join(", ")}).`,
+        { sourceId: source.id, inputPath: source.path, activeContent: inspection.activeContent }
+      );
+    }
+    inspections.set(source.id, inspection);
+    inspectionWarnings.push(...inspection.warnings);
+  }
+  assertPageRanges(options.manifest, inspections);
+  const compatWarnings = union<CompatWarningKind>(
+    options.sources.map((source) => inspections.get(source.id)?.compatWarnings ?? [])
+  );
+
+  const profile = options.compression ? getCompressionProfile(options.compression) : null;
+
+  const workspace = await createTempWorkspace("pdf-pages-");
+  const stagingPath = join(dirname(options.destinationPath), `.pdf-pages-staging-${randomUUID()}.pdf`);
+  try {
+    const candidatePath = workspace.file(`assembly-${randomUUID()}.pdf`);
+    const primaryPath = options.sources.length === 1 ? options.sources[0].path : null;
+    const mutationWarnings = await runQpdfAssemblyMutation(
+      {
+        primaryPath,
+        groups: buildGroups(options.manifest, bound),
+        rotations: buildRotationRanges(options.manifest),
+        candidatePath
+      },
+      calls
+    );
+
+    const finalInspection = await validatePdfArtifact(candidatePath, options.manifest.pages.length, calls);
+    const warnings = [...inspectionWarnings, ...mutationWarnings, ...finalInspection.warnings];
+
+    let chosenPath = candidatePath;
+    let engine: "qpdf" | "ghostscript" = "qpdf";
+    let status: "success" | "no_gain" = "success";
+    let ghostscriptVersion: string | undefined;
+
+    if (profile) {
+      if (!profile.lossy) {
+        status = "no_gain";
+        warnings.push(
+          `Profile "${profile.name}" is lossless; structural optimization already ran during assembly.`
+        );
+      } else {
+        ghostscriptVersion = await getGhostscriptVersion(calls);
+        assertNativeFloor("gs", ghostscriptVersion, GHOSTSCRIPT_SECURITY_FLOOR);
+        const compressedCandidate = workspace.file(`compressed-${randomUUID()}.pdf`);
+        try {
+          const gsResult = await calls.run(
+            "gs",
+            ghostscriptArgs(compressedCandidate, profile, candidatePath),
+            { signal: calls.signal, timeoutMs: calls.timeoutMs }
+          );
+          if (gsResult.stderr) warnings.push(gsResult.stderr);
+          const compressedInspection = await validatePdfArtifact(
+            compressedCandidate,
+            options.manifest.pages.length,
+            calls
+          );
+          warnings.push(...compressedInspection.warnings);
+          const [assemblyStat, compressedStat] = await Promise.all([
+            stat(candidatePath),
+            stat(compressedCandidate)
+          ]);
+          if (compressedStat.size < assemblyStat.size) {
+            chosenPath = compressedCandidate;
+            engine = "ghostscript";
+          } else {
+            status = "no_gain";
+            warnings.push("Compression did not reduce file size; delivering the assembled PDF.");
+          }
+        } catch (error) {
+          if (error instanceof CompressionError && error.code === "OUTPUT_INVALID") {
+            status = "no_gain";
+            warnings.push("Compression candidate was invalid; delivering the assembled PDF.");
+          } else {
+            throw error;
+          }
+        }
+      }
+    }
+
+    try {
+      await copyFile(chosenPath, stagingPath);
+      await publishNoClobber(stagingPath, options.destinationPath);
+    } finally {
+      await rm(stagingPath, { force: true });
+    }
+    const outputStat = await stat(options.destinationPath);
+
+    return {
+      status,
+      outputPath: options.destinationPath,
+      pageCount: options.manifest.pages.length,
+      outputBytes: outputStat.size,
+      engine,
+      qpdfVersion,
+      ...(ghostscriptVersion ? { ghostscriptVersion } : {}),
+      warnings,
+      compatWarnings,
+      sourceHashes
+    };
+  } finally {
+    await workspace.cleanup();
+  }
+}
