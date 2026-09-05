@@ -9,23 +9,33 @@
  *
  * Method: five warmups plus twenty measured samples per operation.
  * Measured for real: core inspect, core assemble, core validate, equivalent
- * direct native pipeline (qpdf --json + qpdf page assembly + qpdf --check),
- * 100-page in-memory manifest/gesture latency, cancellation/cleanup timing.
- * Recorded honestly: commit (read from .git/HEAD, never via git), hardware
+ * direct native pipeline (qpdf --json + one qpdf page-selection mutation +
+ * qpdf --check with result validation), 100-page in-memory manifest/gesture
+ * latency, cancellation/cleanup timing. Recorded honestly: commit (read
+ * from .git/HEAD or a worktree .git pointer, never via git), hardware
  * class without private identifiers, OS, Node, qpdf/Ghostscript versions,
  * production asset hashes, corpus hashes.
  *
  * Explicitly NOT measured here (no real-browser driver installed, no
  * fabricated evidence): SC3 cold first-thumbnail browser time, browser
  * gesture p95, SC8 100 MiB streaming RSS. Those stay `unverified` in the
- * baseline and in docs. This script succeeds only for the metrics it
- * genuinely measures.
+ * baseline and in docs. This script exits nonzero when any measured gate
+ * (SC5 p95 overhead, or --max-assemble-p95-ms when provided) is exceeded.
  */
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { arch, cpus, totalmem, platform, release } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -34,6 +44,24 @@ const PERF_DIR = join(ROOT, "tests", "performance");
 const BASELINE_PATH = join(ROOT, "docs", "benchmarks", "page-editor-baseline.json");
 const WARMUPS = 5;
 const SAMPLES = 20;
+
+/* --- pure SC5 gate (exported for tests; p95 compared, never medians) --- */
+
+/** Budget: core assemble p95 must stay within max(300ms, 20% beyond native p95). */
+export function sc5BudgetMs(nativeP95Ms) {
+  return Math.max(300, nativeP95Ms * 1.2);
+}
+
+export function evaluateSc5Gate(coreP95Ms, nativeP95Ms) {
+  const budgetMs = +sc5BudgetMs(nativeP95Ms).toFixed(2);
+  return {
+    coreP95Ms,
+    nativeP95Ms,
+    budgetMs,
+    withinSc5: coreP95Ms <= sc5BudgetMs(nativeP95Ms),
+    note: "SC5 gate: core assemble p95 within max(300ms, 20% beyond direct native pipeline p95)."
+  };
+}
 
 /* --- deterministic minimal-PDF builder (standalone; mirrors the TS test fixture shape) --- */
 
@@ -97,15 +125,37 @@ function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-function readCommit() {
+/** Resolve the git dir: a normal `.git` directory or a worktree `.git` pointer file. */
+export function resolveGitDir(root) {
+  const dotGit = join(root, ".git");
+  let st;
   try {
-    const head = readFileSync(join(ROOT, ".git", "HEAD"), "utf8").trim();
+    st = statSync(dotGit);
+  } catch {
+    return null;
+  }
+  if (st.isDirectory()) return dotGit;
+  if (st.isFile()) {
+    try {
+      const pointer = readFileSync(dotGit, "utf8").trim();
+      const match = /^gitdir:\s*(.+)$/.exec(pointer);
+      if (match) return resolve(root, match[1]);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+export function readCommit(root = ROOT) {
+  try {
+    const gitDir = resolveGitDir(root);
+    if (!gitDir) return "unknown (detached workspace; host owns the base commit)";
+    const head = readFileSync(join(gitDir, "HEAD"), "utf8").trim();
     const match = /^ref: (.+)$/.exec(head);
-    if (match) return readFileSync(join(ROOT, ".git", match[1]), "utf8").trim();
+    if (match) return readFileSync(join(gitDir, match[1]), "utf8").trim();
     return head;
   } catch {
-    // Detached/external workspaces expose .git as a pointer outside the
-    // workspace; the host owns the base commit, so record that honestly.
     return "unknown (detached workspace; host owns the base commit)";
   }
 }
@@ -159,149 +209,213 @@ async function measure(fn, label) {
   return { operation: label, warmups: WARMUPS, ...stats(samples) };
 }
 
-const regen = process.argv.includes("--regen-corpora");
-const corpora = ensureCorpora(regen);
-
-/* Dynamic imports of the built core (benchmark runs after `npm run build`). */
-const core = await import("../packages/core/dist/index.js");
-const manifestMod = await import("../packages/core/dist/page-manifest.js");
-
-const corpusHashes = Object.fromEntries(corpora.map((p) => [p.split("/").pop(), sha256(p)]));
-
-const assetDir = join(ROOT, "apps", "web", "dist", "assets");
-const assetHashes = {};
-try {
-  for (const f of readdirSync(assetDir)) assetHashes[f] = sha256(join(assetDir, f));
-} catch {
-  console.error("benchmark-page-editor: FAIL: apps/web/dist is missing; run `npm run build` first.");
-  process.exit(1);
-}
-
-/* Manifests: reverse order with a 90-degree rotation on every 4th output page. */
-function manifestFor(sourceId, pageCount) {
-  const pages = [];
-  for (let p = pageCount; p >= 1; p -= 1) {
-    const entry = { sourceId, page: p };
-    if (p % 4 === 0) entry.rotate = 90;
-    pages.push(entry);
+/**
+ * Output-position rotation ranges for the direct native pipeline, mirroring
+ * the core manifest exactly: for each relative angle, the 1-based output
+ * positions carrying that rotation, comma-joined into a single range.
+ */
+export function rotationRangesFor(manifest) {
+  const positions = { 90: [], 180: [], 270: [] };
+  manifest.pages.forEach((entry, index) => {
+    const rotate = entry.rotate ?? 0;
+    if (rotate === 90 || rotate === 180 || rotate === 270) positions[rotate].push(index + 1);
+  });
+  const ranges = {};
+  for (const angle of [90, 180, 270]) {
+    if (positions[angle].length > 0) ranges[angle] = [positions[angle].join(",")];
   }
-  return manifestMod.parsePageManifest({ version: 1, pages });
+  return ranges;
 }
 
-const results = {};
-for (const corpusPath of corpora) {
-  const name = corpusPath.split("/").pop();
-  const pageCount = Number(/corpus-(\d+)/.exec(name)[1]);
-  const manifest = manifestFor("bench", pageCount);
-  const scratch = mkdtempSync(join(tmpdir(), "u6-bench-"));
-  const out = join(scratch, `out-${randomUUID()}.pdf`);
+export function parseMaxAssembleP95(argv) {
+  for (const arg of argv) {
+    const match = /^--max-assemble-p95-ms=(\d+(?:\.\d+)?)$/.exec(arg);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
 
-  const coreInspect = await measure(
-    () => core.inspectSources([{ id: "bench", path: corpusPath }]),
-    `core-inspect-${name}`
-  );
-  const coreAssemble = await measure(
-    async () => {
-      const dest = join(scratch, `a-${randomUUID()}.pdf`);
-      await core.assemblePages({ sources: [{ id: "bench", path: corpusPath }], manifest, destinationPath: dest });
+const invokedDirectly = process.argv[1] === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  const regen = process.argv.includes("--regen-corpora");
+  const maxAssembleP95 = parseMaxAssembleP95(process.argv);
+  const corpora = ensureCorpora(regen);
+
+  /* Dynamic imports of the built core (benchmark runs after `npm run build`). */
+  const core = await import("../packages/core/dist/index.js");
+  const manifestMod = await import("../packages/core/dist/page-manifest.js");
+
+  const corpusHashes = Object.fromEntries(corpora.map((p) => [p.split("/").pop(), sha256(p)]));
+
+  const assetDir = join(ROOT, "apps", "web", "dist", "assets");
+  const assetHashes = {};
+  try {
+    for (const f of readdirSync(assetDir)) assetHashes[f] = sha256(join(assetDir, f));
+  } catch {
+    console.error("benchmark-page-editor: FAIL: apps/web/dist is missing; run `npm run build` first.");
+    process.exit(1);
+  }
+
+  /* Manifests: reverse order with a 90-degree rotation on every 4th output page. */
+  function manifestFor(sourceId, pageCount) {
+    const pages = [];
+    for (let p = pageCount; p >= 1; p -= 1) {
+      const entry = { sourceId, page: p };
+      if (p % 4 === 0) entry.rotate = 90;
+      pages.push(entry);
+    }
+    return manifestMod.parsePageManifest({ version: 1, pages });
+  }
+
+  const results = {};
+  const scratchDirs = [];
+  try {
+    for (const corpusPath of corpora) {
+      const name = corpusPath.split("/").pop();
+      const pageCount = Number(/corpus-(\d+)/.exec(name)[1]);
+      const manifest = manifestFor("bench", pageCount);
+      const scratch = mkdtempSync(join(tmpdir(), "u6-bench-"));
+      scratchDirs.push(scratch);
+      try {
+        const coreInspect = await measure(
+          () => core.inspectSources([{ id: "bench", path: corpusPath }]),
+          `core-inspect-${name}`
+        );
+        const coreAssemble = await measure(
+          async () => {
+            const dest = join(scratch, `a-${randomUUID()}.pdf`);
+            await core.assemblePages({ sources: [{ id: "bench", path: corpusPath }], manifest, destinationPath: dest });
+          },
+          `core-assemble-${name}`
+        );
+
+        // Equivalent direct native pipeline: the same single qpdf
+        // page-selection mutation the core runs for this manifest
+        // (reversed order, same relative rotations, same structural
+        // optimization flags), bracketed by --json inspection and --check,
+        // with the result validated for page count.
+        const reversed = Array.from({ length: pageCount }, (_, i) => pageCount - i).join(",");
+        const rotations = rotationRangesFor(manifest);
+        const directNative = await measure(async () => {
+          const dest = join(scratch, `n-${randomUUID()}.pdf`);
+          await execCapture("qpdf", ["--json", "--", corpusPath]);
+          const mutationArgs = ["--", corpusPath, "--pages", `--file=${corpusPath}`, `--range=${reversed}`, "--"];
+          for (const angle of [90, 180, 270]) {
+            if (rotations[angle]) mutationArgs.push(`--rotate=+${angle}:${rotations[angle].join(",")}`);
+          }
+          mutationArgs.push(
+            "--object-streams=generate",
+            "--compress-streams=y",
+            "--recompress-flate",
+            "--",
+            dest
+          );
+          await execCapture("qpdf", mutationArgs);
+          await execCapture("qpdf", ["--check", "--", dest]);
+          const { stdout } = await execCapture("qpdf", ["--json", "--", dest]);
+          const parsed = JSON.parse(stdout);
+          if (!Array.isArray(parsed.pages) || parsed.pages.length !== pageCount) {
+            throw new Error(
+              `direct native pipeline produced ${Array.isArray(parsed.pages) ? parsed.pages.length : "?"} pages, expected ${pageCount}`
+            );
+          }
+        }, `direct-native-${name}`);
+
+        const sc5 = evaluateSc5Gate(coreAssemble.p95Ms, directNative.p95Ms);
+
+        let entry = { inspect: coreInspect, assemble: coreAssemble, directNative, sc5 };
+
+        if (name === "corpus-100.pdf") {
+          // 100-page in-memory gesture latency: pure manifest parse + reorder/rotate/delete ops.
+          const gesture = await measure(async () => {
+            const parsed = manifestMod.parsePageManifest(JSON.parse(JSON.stringify({ version: 1, pages: manifest.pages })));
+            const pages = [...parsed.pages];
+            const [moved] = pages.splice(49, 1);
+            pages.unshift(moved);
+            pages[9] = { ...pages[9], rotate: 90 };
+            pages.splice(19, 1);
+          }, "gesture-100-page-manifest-node");
+          entry.gesture = { ...gesture, note: "Node-side manifest ops only; browser gesture p95 stays unverified (no real-browser driver)." };
+
+          // Cancellation/cleanup timing: abort before start must fail fast with no residue.
+          const controller = new AbortController();
+          const cancelStart = performance.now();
+          const cancelDest = join(scratch, `c-${randomUUID()}.pdf`);
+          controller.abort();
+          let cancelCode = "";
+          try {
+            await core.assemblePages({
+              sources: [{ id: "bench", path: corpusPath }],
+              manifest,
+              destinationPath: cancelDest,
+              signal: controller.signal
+            });
+          } catch (error) {
+            cancelCode = error.code ?? error.name ?? "unknown";
+          }
+          entry.cancellation = {
+            abortToRejectionMs: +(performance.now() - cancelStart).toFixed(2),
+            code: cancelCode,
+            destCreated: existsSync(cancelDest),
+            note: "Pre-start abort path; SC7 process-group timing needs an in-flight native process and stays unverified."
+          };
+        }
+        results[name] = entry;
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    }
+  } finally {
+    for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+  }
+
+  const cpuList = cpus();
+  const baseline = {
+    generatedAt: new Date().toISOString(),
+    commit: readCommit(),
+    hardwareClass: {
+      arch: arch(),
+      cpuModel: cpuList[0]?.model ?? "unknown",
+      cpuCount: cpuList.length,
+      memoryGb: Math.round(totalmem() / 1024 ** 3),
+      note: "Class only; no serial number, UUID, hostname, or account name recorded."
     },
-    `core-assemble-${name}`
-  );
-
-  // Equivalent direct native pipeline: --json, one page-selection mutation, --check.
-  const directNative = await measure(async () => {
-    const dest = join(scratch, `n-${randomUUID()}.pdf`);
-    await execCapture("qpdf", ["--json", "--", corpusPath]);
-    const reversed = Array.from({ length: pageCount }, (_, i) => pageCount - i).join(",");
-    await execCapture("qpdf", ["--", corpusPath, "--pages", "--file=" + corpusPath, `--range=${reversed}`, "--", dest]);
-    await execCapture("qpdf", ["--check", "--", dest]);
-  }, `direct-native-${name}`);
-
-  const assembleMed = coreAssemble.medianMs;
-  const nativeMed = directNative.medianMs;
-  const overhead = {
-    coreMedianMs: assembleMed,
-    nativeMedianMs: nativeMed,
-    withinSc5: assembleMed <= Math.max(300, nativeMed * 1.2),
-    note: "SC5 gate: core overhead within max(300ms, 20% beyond direct native pipeline), medians compared."
+    os: `${platform()} ${release()}`,
+    node: process.version,
+    qpdf: await qpdfVersion(),
+    ghostscript: await gsVersion(),
+    assetHashes,
+    corpusHashes,
+    method: { warmups: WARMUPS, samples: SAMPLES },
+    results,
+    unverified: [
+      "SC3 cold first-thumbnail time: needs a real-browser driver against the built app; not measured here.",
+      "SC4 browser gesture p95: node manifest-op latency is measured above; browser p95 stays unverified.",
+      "SC5 browser-to-downloadable overhead: needs a real-browser driver; not measured here.",
+      "SC7 in-flight cancellation (500ms signal / 2s group termination / 2s cleanup): only the pre-start abort path is timed here.",
+      "SC8 100 MiB streaming RSS: needs an isolated harness; not measured here."
+    ],
+    corpusLicense: "Generated synthetic fixtures (no private data); safe to redistribute."
   };
 
-  let entry = { inspect: coreInspect, assemble: coreAssemble, directNative, sc5: overhead };
+  mkdirSync(join(ROOT, "docs", "benchmarks"), { recursive: true });
+  writeFileSync(BASELINE_PATH, JSON.stringify(baseline, null, 2) + "\n");
 
-  if (name === "corpus-100.pdf") {
-    // 100-page in-memory gesture latency: pure manifest parse + reorder/rotate/delete ops.
-    const gesture = await measure(async () => {
-      const parsed = manifestMod.parsePageManifest(JSON.parse(JSON.stringify({ version: 1, pages: manifest.pages })));
-      const pages = [...parsed.pages];
-      const [moved] = pages.splice(49, 1);
-      pages.unshift(moved);
-      pages[9] = { ...pages[9], rotate: 90 };
-      pages.splice(19, 1);
-    }, "gesture-100-page-manifest-node");
-    entry.gesture = { ...gesture, note: "Node-side manifest ops only; browser gesture p95 stays unverified (no real-browser driver)." };
-
-    // Cancellation/cleanup timing: abort before start must fail fast with no residue.
-    const controller = new AbortController();
-    const cancelStart = performance.now();
-    const cancelDest = join(scratch, `c-${randomUUID()}.pdf`);
-    controller.abort();
-    let cancelCode = "";
-    try {
-      await core.assemblePages({
-        sources: [{ id: "bench", path: corpusPath }],
-        manifest,
-        destinationPath: cancelDest,
-        signal: controller.signal
-      });
-    } catch (error) {
-      cancelCode = error.code ?? error.name ?? "unknown";
+  let failed = false;
+  console.log(`benchmark-page-editor: qpdf ${baseline.qpdf}, gs ${baseline.ghostscript}, node ${baseline.node}`);
+  for (const [name, entry] of Object.entries(results)) {
+    console.log(`  ${name}: inspect p95 ${entry.inspect.p95Ms}ms, assemble p95 ${entry.assemble.p95Ms}ms, native p95 ${entry.directNative.p95Ms}ms, SC5 ${entry.sc5.withinSc5 ? "within" : "OVER"} budget (p95 vs budget ${entry.sc5.budgetMs}ms)`);
+    if (!entry.sc5.withinSc5) failed = true;
+    if (maxAssembleP95 !== null && entry.assemble.p95Ms > maxAssembleP95) {
+      console.error(`  ${name}: FAIL: assemble p95 ${entry.assemble.p95Ms}ms exceeds --max-assemble-p95-ms=${maxAssembleP95}ms.`);
+      failed = true;
     }
-    entry.cancellation = {
-      abortToRejectionMs: +(performance.now() - cancelStart).toFixed(2),
-      code: cancelCode,
-      destCreated: existsSync(cancelDest),
-      note: "Pre-start abort path; SC7 process-group timing needs an in-flight native process and stays unverified."
-    };
+    if (entry.gesture) console.log(`  gesture-100: p95 ${entry.gesture.p95Ms}ms (node manifest ops; browser p95 unverified)`);
+    if (entry.cancellation) console.log(`  cancellation: ${entry.cancellation.abortToRejectionMs}ms -> ${entry.cancellation.code}`);
   }
-  results[name] = entry;
+  console.log(`benchmark-page-editor: wrote ${BASELINE_PATH}`);
+  if (failed) {
+    console.error("benchmark-page-editor: FAIL: one or more measured gates exceeded their budget.");
+    process.exit(1);
+  }
 }
-
-const cpuList = cpus();
-const baseline = {
-  generatedAt: new Date().toISOString(),
-  commit: readCommit(),
-  hardwareClass: {
-    arch: arch(),
-    cpuModel: cpuList[0]?.model ?? "unknown",
-    cpuCount: cpuList.length,
-    memoryGb: Math.round(totalmem() / 1024 ** 3),
-    note: "Class only; no serial number, UUID, hostname, or account name recorded."
-  },
-  os: `${platform()} ${release()}`,
-  node: process.version,
-  qpdf: await qpdfVersion(),
-  ghostscript: await gsVersion(),
-  assetHashes,
-  corpusHashes,
-  method: { warmups: WARMUPS, samples: SAMPLES },
-  results,
-  unverified: [
-    "SC3 cold first-thumbnail time: needs a real-browser driver against the built app; not measured here.",
-    "SC4 browser gesture p95: node manifest-op latency is measured above; browser p95 stays unverified.",
-    "SC5 browser-to-downloadable overhead: needs a real-browser driver; not measured here.",
-    "SC7 in-flight cancellation (500ms signal / 2s group termination / 2s cleanup): only the pre-start abort path is timed here.",
-    "SC8 100 MiB streaming RSS: needs an isolated harness; not measured here."
-  ],
-  corpusLicense: "Generated synthetic fixtures (no private data); safe to redistribute."
-};
-
-mkdirSync(join(ROOT, "docs", "benchmarks"), { recursive: true });
-writeFileSync(BASELINE_PATH, JSON.stringify(baseline, null, 2) + "\n");
-
-console.log(`benchmark-page-editor: qpdf ${baseline.qpdf}, gs ${baseline.ghostscript}, node ${baseline.node}`);
-for (const [name, entry] of Object.entries(results)) {
-  console.log(`  ${name}: inspect p95 ${entry.inspect.p95Ms}ms, assemble p95 ${entry.assemble.p95Ms}ms, native p95 ${entry.directNative.p95Ms}ms, SC5 ${entry.sc5.withinSc5 ? "within" : "OVER"} budget`);
-  if (entry.gesture) console.log(`  gesture-100: p95 ${entry.gesture.p95Ms}ms (node manifest ops; browser p95 unverified)`);
-  if (entry.cancellation) console.log(`  cancellation: ${entry.cancellation.abortToRejectionMs}ms -> ${entry.cancellation.code}`);
-}
-console.log(`benchmark-page-editor: wrote ${BASELINE_PATH}`);

@@ -39,10 +39,15 @@ page-selection mutation, optional Ghostscript candidate selection, final
 
 - SC1/SC2 enforced by `scripts/check-editor-bundle.mjs` against the built
   Vite asset graph.
-- Native floors enforced by `scripts/check-native-versions.mjs` from the
-  shared constants in `packages/core/src/native-floors.ts`.
+- Native floors enforced by `scripts/check-native-versions.mjs`, read from
+  the built browser-safe `@pdf-compressor/core/native-floors` output
+  (single source of truth in `packages/core/src/native-floors.ts`). The
+  gate always runs after the core build/typecheck and fails clearly when
+  the core has not been built.
 - Reproducible measurements in `docs/benchmarks/page-editor-baseline.json`
-  via `scripts/benchmark-page-editor.mjs`. Browser-only criteria
+  via `scripts/benchmark-page-editor.mjs`. SC5 compares core assemble p95
+  against max(300ms, 20% beyond the equivalent direct native pipeline p95)
+  and exits nonzero when exceeded. Browser-only criteria
   (SC3, browser gesture p95, browser-to-download overhead, in-flight SC7,
   SC8 streaming RSS) are marked unverified there: no real-browser driver
   is installed and this project fabricates no such evidence.

@@ -204,6 +204,52 @@ async function handleLaunch(req: IncomingMessage, res: ServerResponse, sessions:
 }
 
 /**
+ * Deterministic transfer-boundary state machine for leased downloads.
+ *
+ * A completely flushed HTTP response can emit `finish` before the readable
+ * stream's `end`. `finish` is therefore the authoritative successful
+ * transfer boundary: it consumes the record synchronously so a trailing
+ * `close` cannot release the lease back for a replay. A `close` before
+ * `finish`, request abort, or stream error releases the lease for one retry.
+ */
+export interface DownloadLeaseSink {
+  consumeSync(): void;
+  release(): void;
+  destroySource(): void;
+  destroyResponse(): void;
+}
+
+export function createDownloadTracker(sink: DownloadLeaseSink): {
+  onFinish(): void;
+  onClose(): void;
+  onAbort(): void;
+  onStreamError(): void;
+} {
+  let settled = false;
+  let finished = false;
+  const succeed = (): void => {
+    if (settled) return;
+    settled = true;
+    finished = true;
+    sink.consumeSync();
+  };
+  const fail = (destroy: () => void): void => {
+    if (settled) return;
+    settled = true;
+    destroy();
+    sink.release();
+  };
+  return {
+    onFinish: () => succeed(),
+    onClose: () => {
+      if (!finished) fail(() => sink.destroySource());
+    },
+    onAbort: () => fail(() => sink.destroySource()),
+    onStreamError: () => fail(() => sink.destroyResponse())
+  };
+}
+
+/**
  * Session-bound leased download. Exactly one transfer holds the lease; a
  * failed transfer releases it for one retry, while a completed response
  * consumes the artifact. `Cache-Control: no-store` is always sent.
@@ -239,19 +285,6 @@ async function handleDownload(
     return;
   }
 
-  let sourceDone = false;
-  let responseDone = false;
-  let settled = false;
-  const settle = (completed: boolean): void => {
-    if (settled) return;
-    settled = true;
-    if (completed && sourceDone && responseDone) {
-      void jobs.consume(handle, sessionId);
-    } else {
-      jobs.release(handle, sessionId);
-    }
-  };
-
   res.writeHead(200, {
     "content-type": "application/pdf",
     "content-length": fileSize,
@@ -259,37 +292,43 @@ async function handleDownload(
     "cache-control": "no-store"
   });
   const stream = createReadStream(record.outputPath);
+  const tracker = createDownloadTracker({
+    consumeSync: () => {
+      jobs.consumeSync(handle, sessionId);
+    },
+    release: () => {
+      jobs.release(handle, sessionId);
+    },
+    destroySource: () => {
+      stream.destroy();
+    },
+    destroyResponse: () => {
+      try {
+        res.destroy();
+      } catch {
+        // Best effort.
+      }
+    }
+  });
   // A completed request stream firing `close` on `req` must not cancel the
   // response: only an actually aborted request, a source failure, or a
   // response that closes before `finish` releases the lease for one retry.
+  // `finish` is the authoritative success boundary and consumes the record
+  // synchronously, so it wins even when it fires before the stream's `end`.
   req.on("aborted", () => {
-    stream.destroy();
-    settle(false);
+    tracker.onAbort();
   });
   stream.on("error", () => {
-    try {
-      res.destroy();
-    } catch {
-      // Best effort.
-    }
-    settle(false);
+    tracker.onStreamError();
   });
-  stream.on("end", () => {
-    sourceDone = true;
+  res.on("finish", () => {
+    tracker.onFinish();
   });
   res.on("close", () => {
     // `close` fires after `finish` on a completed response. Any other close
     // means the transfer did not complete: tear down the source and release
     // the lease so one retry stays possible.
-    if (sourceDone && responseDone) settle(true);
-    else {
-      stream.destroy();
-      settle(false);
-    }
-  });
-  res.on("finish", () => {
-    responseDone = true;
-    if (sourceDone) settle(true);
+    tracker.onClose();
   });
   stream.pipe(res);
 }

@@ -2,19 +2,51 @@
 /**
  * U6 native-version gate (KTD10).
  *
- * Source of truth for the floors: packages/core/src/native-floors.ts
- * (QPDF_SECURITY_FLOOR, GHOSTSCRIPT_SECURITY_FLOOR). The values are
- * duplicated here so this gate stays dependency-free and reusable in
- * CI/local verification without a build.
+ * Single source of truth: packages/core/src/native-floors.ts, read here
+ * from the built browser-safe `@pdf-compressor/core/native-floors` output
+ * (packages/core/dist/native-floors.js). No values are duplicated in this
+ * file; when the core has not been built this gate fails with a clear
+ * rebuild instruction instead of checking against stale constants.
  *
  * Behavior: parse actual `qpdf --version` / `gs --version` output
  * robustly, require qpdf, treat Ghostscript as optional (missing gs only
  * disables compression), and fail closed below either floor.
  */
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const QPDF_SECURITY_FLOOR = "12.4.1";
-const GHOSTSCRIPT_SECURITY_FLOOR = "10.07.1";
+const HERE = dirname(fileURLToPath(import.meta.url));
+const BUILT_FLOORS = join(HERE, "..", "packages", "core", "dist", "native-floors.js");
+
+function fail(message) {
+  console.error(`check-native-versions: FAIL: ${message}`);
+  process.exit(1);
+}
+
+if (!existsSync(BUILT_FLOORS)) {
+  fail(
+    "built native floors are missing at packages/core/dist/native-floors.js; " +
+      "run `npm run build` (or `npm run typecheck`) first so this gate reads the single source of truth."
+  );
+}
+
+let QPDF_SECURITY_FLOOR;
+let GHOSTSCRIPT_SECURITY_FLOOR;
+try {
+  const floors = await import(pathToFileURL(BUILT_FLOORS).href);
+  QPDF_SECURITY_FLOOR = floors.QPDF_SECURITY_FLOOR;
+  GHOSTSCRIPT_SECURITY_FLOOR = floors.GHOSTSCRIPT_SECURITY_FLOOR;
+} catch (error) {
+  fail(
+    `could not import built native floors (${error instanceof Error ? error.message : String(error)}); ` +
+      "run `npm run build` first."
+  );
+}
+if (typeof QPDF_SECURITY_FLOOR !== "string" || typeof GHOSTSCRIPT_SECURITY_FLOOR !== "string") {
+  fail("built native floors did not export QPDF_SECURITY_FLOOR / GHOSTSCRIPT_SECURITY_FLOOR strings.");
+}
 
 function parseTuple(version) {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version).trim());
@@ -41,6 +73,16 @@ export function parseGhostscriptVersion(output) {
   return parseTuple(first) ? first : null;
 }
 
+export function meetsFloor(found, floor) {
+  const a = parseTuple(found);
+  const b = parseTuple(floor);
+  return a !== null && b !== null && compareTuples(a, b) >= 0;
+}
+
+export function floors() {
+  return { QPDF_SECURITY_FLOOR, GHOSTSCRIPT_SECURITY_FLOOR };
+}
+
 function run(command, args) {
   return new Promise((resolve) => {
     execFile(command, args, { timeout: 15000 }, (error, stdout, stderr) => {
@@ -53,44 +95,42 @@ function run(command, args) {
   });
 }
 
-function meetsFloor(found, floor) {
-  const a = parseTuple(found);
-  const b = parseTuple(floor);
-  return a !== null && b !== null && compareTuples(a, b) >= 0;
-}
-
-const qpdf = await run("qpdf", ["--version"]);
-if (!qpdf.ok) {
-  console.error("check-native-versions: FAIL: qpdf is required for page export but was not found.");
-  process.exit(1);
-}
-const qpdfVersion = parseQpdfVersion(qpdf.stdout);
-if (!qpdfVersion) {
-  console.error("check-native-versions: FAIL: could not parse qpdf version output; failing closed.");
-  process.exit(1);
-}
-console.log(`check-native-versions: qpdf ${qpdfVersion} (floor ${QPDF_SECURITY_FLOOR})`);
-if (!meetsFloor(qpdfVersion, QPDF_SECURITY_FLOOR)) {
-  console.error(`check-native-versions: FAIL: qpdf ${qpdfVersion} is below the security floor ${QPDF_SECURITY_FLOOR}.`);
-  process.exit(1);
-}
-
-const gs = await run("gs", ["--version"]);
-if (!gs.ok) {
-  console.log("check-native-versions: Ghostscript not found; compression stays disabled (optional).");
-} else {
-  const gsVersion = parseGhostscriptVersion(gs.stdout);
-  if (!gsVersion) {
-    console.error("check-native-versions: FAIL: could not parse Ghostscript version output; failing closed.");
+const invokedDirectly =
+  process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+if (invokedDirectly) {
+  const qpdf = await run("qpdf", ["--version"]);
+  if (!qpdf.ok) {
+    console.error("check-native-versions: FAIL: qpdf is required for page export but was not found.");
     process.exit(1);
   }
-  console.log(`check-native-versions: Ghostscript ${gsVersion} (floor ${GHOSTSCRIPT_SECURITY_FLOOR})`);
-  if (!meetsFloor(gsVersion, GHOSTSCRIPT_SECURITY_FLOOR)) {
-    console.error(
-      `check-native-versions: FAIL: Ghostscript ${gsVersion} is below the security floor ${GHOSTSCRIPT_SECURITY_FLOOR}.`
-    );
+  const qpdfVersion = parseQpdfVersion(qpdf.stdout);
+  if (!qpdfVersion) {
+    console.error("check-native-versions: FAIL: could not parse qpdf version output; failing closed.");
     process.exit(1);
   }
-}
+  console.log(`check-native-versions: qpdf ${qpdfVersion} (floor ${QPDF_SECURITY_FLOOR})`);
+  if (!meetsFloor(qpdfVersion, QPDF_SECURITY_FLOOR)) {
+    console.error(`check-native-versions: FAIL: qpdf ${qpdfVersion} is below the security floor ${QPDF_SECURITY_FLOOR}.`);
+    process.exit(1);
+  }
 
-console.log("check-native-versions: PASS");
+  const gs = await run("gs", ["--version"]);
+  if (!gs.ok) {
+    console.log("check-native-versions: Ghostscript not found; compression stays disabled (optional).");
+  } else {
+    const gsVersion = parseGhostscriptVersion(gs.stdout);
+    if (!gsVersion) {
+      console.error("check-native-versions: FAIL: could not parse Ghostscript version output; failing closed.");
+      process.exit(1);
+    }
+    console.log(`check-native-versions: Ghostscript ${gsVersion} (floor ${GHOSTSCRIPT_SECURITY_FLOOR})`);
+    if (!meetsFloor(gsVersion, GHOSTSCRIPT_SECURITY_FLOOR)) {
+      console.error(
+        `check-native-versions: FAIL: Ghostscript ${gsVersion} is below the security floor ${GHOSTSCRIPT_SECURITY_FLOOR}.`
+      );
+      process.exit(1);
+    }
+  }
+
+  console.log("check-native-versions: PASS");
+}

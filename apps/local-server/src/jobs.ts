@@ -306,6 +306,21 @@ export class JobManager {
     return true;
   }
 
+  /**
+   * Synchronously consume an output at the `finish` transfer boundary.
+   * The record leaves the map before asynchronous directory cleanup, so a
+   * trailing `close` can never release the lease back for a replay. Returns
+   * false when the handle is unknown or owned by another session.
+   */
+  consumeSync(handle: string, sessionId: string): boolean {
+    const record = this.retained.get(handle);
+    if (!record || record.sessionId !== sessionId) return false;
+    this.retained.delete(handle);
+    const dir = record.jobDir;
+    void rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    return true;
+  }
+
   /** Explicit discard of a session-bound output. */
   async discard(handle: string, sessionId: string): Promise<boolean> {
     const record = this.retained.get(handle);

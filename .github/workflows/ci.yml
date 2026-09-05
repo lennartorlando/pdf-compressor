@@ -27,10 +27,10 @@ jobs:
           qpdf --version
           gs --version || true
       - run: npm ci
-      - run: npm run check:native-versions
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:integration
       - run: npm run build
       - run: npm run check:editor-bundle
+      - run: npm run check:native-versions
       - run: npm run benchmark:page-editor
