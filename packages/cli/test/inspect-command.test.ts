@@ -174,4 +174,14 @@ describe("runInspectCommand", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toMatch(/Missing input PDF path/);
   });
+
+  it("returns usage errors as one JSON object when --json is present", async () => {
+    const result = await runInspectCommand(["--json"]);
+    expect(result.exitCode).toBe(64);
+    expect(result.stderr).toBe("");
+    expect(expectSingleJsonObject(result.stdout)).toMatchObject({
+      ok: false,
+      code: "USAGE"
+    });
+  });
 });

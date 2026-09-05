@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-05T10:28:13.054Z",
-  "commit": "e9d09871631921a881adeb4fe67c98781a27ad6f",
+  "generatedAt": "2026-09-05T11:46:31.117Z",
+  "commit": "8f886499dbf3a73b640751651643ea74f654ee46",
   "hardwareClass": {
     "arch": "arm64",
     "cpuModel": "Apple M4 Pro",
@@ -13,8 +13,8 @@
   "qpdf": "12.4.1",
   "ghostscript": "10.07.1",
   "assetHashes": {
-    "PageEditor-CGXECjxK.js": "015c83a8efc9bddbd8a8fcbb073be53a8dd7348a25bd1c4b1a67da803b67afe4",
-    "index--qc_VHCC.js": "974dcb6be4d5f1c8f8dae8755a5f6815692a4065772eddbb181fe1826003b63e",
+    "PageEditor-BjuouNZ1.js": "f25fb4a59315dae3a614e810c2fcc5aa6daa5e08bee35edf04b5fab91574499f",
+    "index-BMs13Xav.js": "95150fcb02c82d1d081ba6180504ad5824252bd5cb64c61be85a3784aad8f23a",
     "index-DcmutpAm.css": "2b049dbe0abfb6a7e69e3e3877d18a8faa9b96eab31fb198933b2e437b9a4c1e",
     "pdf-CfP-JzcY.js": "dff80a0c8426633f5d859547e1055fd07b13b5c1a3e2f643f9715a1df4dd4f04",
     "pdf.worker.min-Dswkl-cV.mjs": "8ab0e5e30031b4a06ecfddd5ae9562f0227f830ee7ec9ed1a968b134243d2386"
@@ -34,32 +34,32 @@
         "operation": "core-inspect-corpus-20.pdf",
         "warmups": 5,
         "samples": 20,
-        "minMs": 8.48,
-        "medianMs": 8.68,
-        "p95Ms": 9.59,
-        "maxMs": 9.59
+        "minMs": 9.52,
+        "medianMs": 9.84,
+        "p95Ms": 10.73,
+        "maxMs": 10.73
       },
       "assemble": {
         "operation": "core-assemble-corpus-20.pdf",
         "warmups": 5,
         "samples": 20,
-        "minMs": 23.57,
-        "medianMs": 24.36,
-        "p95Ms": 25.9,
-        "maxMs": 25.9
+        "minMs": 26.84,
+        "medianMs": 28.9,
+        "p95Ms": 33.42,
+        "maxMs": 33.42
       },
       "directNative": {
         "operation": "direct-native-corpus-20.pdf",
         "warmups": 5,
         "samples": 20,
-        "minMs": 13.77,
-        "medianMs": 14.25,
-        "p95Ms": 15.17,
-        "maxMs": 15.17
+        "minMs": 16.88,
+        "medianMs": 17.58,
+        "p95Ms": 18.34,
+        "maxMs": 18.34
       },
       "sc5": {
-        "coreP95Ms": 25.9,
-        "nativeP95Ms": 15.17,
+        "coreP95Ms": 33.42,
+        "nativeP95Ms": 18.34,
         "budgetMs": 300,
         "withinSc5": true,
         "note": "SC5 gate: core assemble p95 within max(300ms, 20% beyond direct native pipeline p95)."
@@ -70,32 +70,32 @@
         "operation": "core-inspect-corpus-100.pdf",
         "warmups": 5,
         "samples": 20,
-        "minMs": 10.35,
-        "medianMs": 10.54,
-        "p95Ms": 12.09,
-        "maxMs": 12.09
+        "minMs": 12.67,
+        "medianMs": 13.25,
+        "p95Ms": 15.44,
+        "maxMs": 15.44
       },
       "assemble": {
         "operation": "core-assemble-corpus-100.pdf",
         "warmups": 5,
         "samples": 20,
-        "minMs": 29.54,
-        "medianMs": 30.09,
-        "p95Ms": 34.62,
-        "maxMs": 34.62
+        "minMs": 33.46,
+        "medianMs": 34.6,
+        "p95Ms": 44.39,
+        "maxMs": 44.39
       },
       "directNative": {
         "operation": "direct-native-corpus-100.pdf",
         "warmups": 5,
         "samples": 20,
-        "minMs": 19.51,
-        "medianMs": 20.17,
-        "p95Ms": 21.03,
-        "maxMs": 21.03
+        "minMs": 23.82,
+        "medianMs": 24.83,
+        "p95Ms": 29.12,
+        "maxMs": 29.12
       },
       "sc5": {
-        "coreP95Ms": 34.62,
-        "nativeP95Ms": 21.03,
+        "coreP95Ms": 44.39,
+        "nativeP95Ms": 29.12,
         "budgetMs": 300,
         "withinSc5": true,
         "note": "SC5 gate: core assemble p95 within max(300ms, 20% beyond direct native pipeline p95)."
@@ -104,14 +104,14 @@
         "operation": "gesture-100-page-manifest-node",
         "warmups": 5,
         "samples": 20,
-        "minMs": 0.03,
-        "medianMs": 0.03,
-        "p95Ms": 0.05,
-        "maxMs": 0.05,
+        "minMs": 0.02,
+        "medianMs": 0.02,
+        "p95Ms": 0.04,
+        "maxMs": 0.04,
         "note": "Node-side manifest ops only; browser gesture p95 stays unverified (no real-browser driver)."
       },
       "cancellation": {
-        "abortToRejectionMs": 0.19,
+        "abortToRejectionMs": 0.21,
         "code": "JOB_CANCELLED",
         "destCreated": false,
         "note": "Pre-start abort path; SC7 process-group timing needs an in-flight native process and stays unverified."
@@ -122,32 +122,32 @@
         "operation": "core-inspect-corpus-500.pdf",
         "warmups": 5,
         "samples": 20,
-        "minMs": 19.92,
-        "medianMs": 20.47,
-        "p95Ms": 22.4,
-        "maxMs": 22.4
+        "minMs": 24.39,
+        "medianMs": 26.91,
+        "p95Ms": 28.9,
+        "maxMs": 28.9
       },
       "assemble": {
         "operation": "core-assemble-corpus-500.pdf",
         "warmups": 5,
         "samples": 20,
-        "minMs": 59.71,
-        "medianMs": 63.13,
-        "p95Ms": 64.87,
-        "maxMs": 64.87
+        "minMs": 70.79,
+        "medianMs": 74.06,
+        "p95Ms": 92.72,
+        "maxMs": 92.72
       },
       "directNative": {
         "operation": "direct-native-corpus-500.pdf",
         "warmups": 5,
         "samples": 20,
-        "minMs": 50.16,
-        "medianMs": 52.21,
-        "p95Ms": 56.45,
-        "maxMs": 56.45
+        "minMs": 60.28,
+        "medianMs": 61.6,
+        "p95Ms": 70.92,
+        "maxMs": 70.92
       },
       "sc5": {
-        "coreP95Ms": 64.87,
-        "nativeP95Ms": 56.45,
+        "coreP95Ms": 92.72,
+        "nativeP95Ms": 70.92,
         "budgetMs": 300,
         "withinSc5": true,
         "note": "SC5 gate: core assemble p95 within max(300ms, 20% beyond direct native pipeline p95)."

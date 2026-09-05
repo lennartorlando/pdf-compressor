@@ -9,7 +9,7 @@ import { getCapabilities, handlePageExport, writeJson } from "./routes/edit.js";
 import { handleCompressRequest } from "./routes/compress.js";
 import { SessionStore, type TokenCheck } from "./session.js";
 
-const webRoot = resolve(process.cwd(), "apps", "web", "dist");
+const webRoot = fileURLToPath(new URL("../../web/dist/", import.meta.url));
 export const defaultHost = "127.0.0.1";
 
 /**
@@ -259,6 +259,25 @@ export function createDownloadTracker(sink: DownloadLeaseSink): {
 }
 
 /**
+ * Node can emit `close` before its `finish` callback for a short
+ * non-keepalive response even after the client received every byte. Treat
+ * that ordering as complete only when the source was fully read and the
+ * response has no buffered bytes left. A real interrupted transfer retains
+ * unread source bytes and therefore stays retryable.
+ */
+export function downloadCompletedAtBoundary(options: {
+  writableFinished: boolean;
+  writableLength: number;
+  bytesRead: number;
+  fileSize: number;
+}): boolean {
+  return (
+    options.writableFinished ||
+    (options.bytesRead === options.fileSize && options.writableLength === 0)
+  );
+}
+
+/**
  * Session-bound leased download. Exactly one transfer holds the lease; a
  * failed transfer releases it for one retry, while a completed response
  * consumes the artifact. `Cache-Control: no-store` is always sent.
@@ -319,15 +338,24 @@ async function handleDownload(
       }
     }
   });
-  // A completed request stream firing `close` on `req` must not cancel the
-  // response: only an actually aborted request, a source failure, or a
-  // response that closes before `finish` with `writableFinished === false`
-  // releases the lease for one retry. `finish`, or a `close` that observes
-  // `writableFinished === true` before the `finish` callback has run, is the
-  // successful boundary and consumes the record synchronously, so it wins
-  // even when it fires before the stream's `end`.
+  // Under load Node can report `aborted` or `close` before `finish` for a
+  // short non-keepalive response even after the client received every byte.
+  // A drained full source with no buffered response bytes is equivalent to
+  // `finish`; a partial source, source error, or buffered close releases the
+  // lease for one retry.
   req.on("aborted", () => {
-    tracker.onAbort();
+    if (
+      downloadCompletedAtBoundary({
+        writableFinished: res.writableFinished === true,
+        writableLength: res.writableLength,
+        bytesRead: stream.bytesRead,
+        fileSize
+      })
+    ) {
+      tracker.onFinish();
+    } else {
+      tracker.onAbort();
+    }
   });
   stream.on("error", () => {
     tracker.onStreamError();
@@ -342,7 +370,14 @@ async function handleDownload(
     // ordering as success so a fully read download cannot be released for
     // replay. Any other close means the transfer did not complete: tear
     // down the source and release the lease so one retry stays possible.
-    tracker.onClose(res.writableFinished === true);
+    tracker.onClose(
+      downloadCompletedAtBoundary({
+        writableFinished: res.writableFinished === true,
+        writableLength: res.writableLength,
+        bytesRead: stream.bytesRead,
+        fileSize
+      })
+    );
   });
   stream.pipe(res);
 }

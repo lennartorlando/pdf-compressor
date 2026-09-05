@@ -1,4 +1,6 @@
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { CompressionError } from "./errors.js";
 
 export interface PdfValidationResult {
@@ -6,7 +8,25 @@ export interface PdfValidationResult {
   sizeBytes: number;
 }
 
-export async function validatePdfInput(inputPath: string, outputPath?: string): Promise<PdfValidationResult> {
+export interface PdfValidationHashResult extends PdfValidationResult {
+  sha256: string;
+}
+
+async function validatePdfInputStream(
+  inputPath: string,
+  outputPath: string | undefined,
+  includeHash: false
+): Promise<PdfValidationResult>;
+async function validatePdfInputStream(
+  inputPath: string,
+  outputPath: string | undefined,
+  includeHash: true
+): Promise<PdfValidationHashResult>;
+async function validatePdfInputStream(
+  inputPath: string,
+  outputPath: string | undefined,
+  includeHash: boolean
+): Promise<PdfValidationResult | PdfValidationHashResult> {
   if (outputPath && inputPath === outputPath) {
     throw new CompressionError(
       "OUTPUT_WOULD_OVERWRITE_INPUT",
@@ -25,21 +45,57 @@ export async function validatePdfInput(inputPath: string, outputPath?: string): 
     throw new CompressionError("INPUT_NOT_FOUND", "Source PDF path is not a file.", { inputPath });
   }
 
-  const bytes = await readFile(inputPath);
-  const header = bytes.subarray(0, 1024).toString("latin1");
+  const hash = includeHash ? createHash("sha256") : null;
+  const headerChunks: Buffer[] = [];
+  let headerBytes = 0;
+  let scanTail = "";
+  let encrypted = false;
+  for await (const rawChunk of createReadStream(inputPath)) {
+    const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+    hash?.update(chunk);
+    if (headerBytes < 1024) {
+      const slice = chunk.subarray(0, 1024 - headerBytes);
+      headerChunks.push(slice);
+      headerBytes += slice.length;
+    }
+
+    const text = scanTail + chunk.toString("latin1");
+    const pattern = /\/Encrypt\b/g;
+    for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+      if (match.index + match[0].length < text.length) {
+        encrypted = true;
+        break;
+      }
+    }
+    scanTail = text.slice(-8);
+  }
+
+  const header = Buffer.concat(headerChunks, headerBytes).toString("latin1");
   if (!header.includes("%PDF-")) {
     throw new CompressionError("INPUT_NOT_PDF", "Source file is not a supported PDF.");
   }
 
-  const bodySample = bytes.toString("latin1");
-  if (/\/Encrypt\b/.test(bodySample)) {
+  if (encrypted || /\/Encrypt\b/.test(scanTail)) {
     throw new CompressionError("INPUT_ENCRYPTED", "Encrypted PDFs are not supported yet.");
   }
 
   return {
     inputPath,
-    sizeBytes: fileStat.size
+    sizeBytes: fileStat.size,
+    ...(hash ? { sha256: hash.digest("hex") } : {})
   };
+}
+
+export async function validatePdfInput(inputPath: string, outputPath?: string): Promise<PdfValidationResult> {
+  return validatePdfInputStream(inputPath, outputPath, false);
+}
+
+/** Validate and hash a source in one streaming pass without retaining file-sized buffers. */
+export async function validateAndHashPdfInput(
+  inputPath: string,
+  outputPath?: string
+): Promise<PdfValidationHashResult> {
+  return validatePdfInputStream(inputPath, outputPath, true);
 }
 
 interface FileIdentity {

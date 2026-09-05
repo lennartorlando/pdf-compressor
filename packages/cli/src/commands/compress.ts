@@ -1,6 +1,12 @@
-import { stat } from "node:fs/promises";
-import { CompressionError, compressPdf, compressionProfiles, type CompressionProfileName } from "@pdf-compressor/core";
-import { exitCodeFor, formatJsonError, formatJsonSuccess, type CliResult } from "../output.js";
+import { compressPdf, compressionProfiles, type CompressionProfileName } from "@pdf-compressor/core";
+import { withDestinationPublication } from "../destination.js";
+import {
+  exitCodeFor,
+  formatJsonError,
+  formatJsonSuccess,
+  usageErrorResult,
+  type CliResult
+} from "../output.js";
 
 export interface CompressCommandOptions {
   inputPath?: string;
@@ -8,6 +14,10 @@ export interface CompressCommandOptions {
   profile: CompressionProfileName;
   json: boolean;
   overwrite: boolean;
+}
+
+export interface CompressCommandDeps {
+  signal?: AbortSignal;
 }
 
 export function parseCompressArgs(args: string[]): CompressCommandOptions {
@@ -42,11 +52,17 @@ export function parseCompressArgs(args: string[]): CompressCommandOptions {
   return options;
 }
 
-export async function runCompressCommand(args: string[]): Promise<CliResult> {
+export async function runCompressCommand(
+  args: string[],
+  deps: CompressCommandDeps = {}
+): Promise<CliResult> {
   let options: CompressCommandOptions;
   try {
     options = parseCompressArgs(args);
   } catch (error) {
+    if (args.includes("--json")) {
+      return usageErrorResult(error);
+    }
     return {
       exitCode: 64,
       stdout: "",
@@ -55,15 +71,19 @@ export async function runCompressCommand(args: string[]): Promise<CliResult> {
   }
 
   try {
-    if (!options.overwrite && await pathExists(options.outputPath!)) {
-      throw new CompressionError("OUTPUT_EXISTS", "Output path already exists. Pass --overwrite to replace it.");
-    }
-
-    const summary = await compressPdf({
-      inputPath: options.inputPath!,
-      outputPath: options.outputPath!,
-      profile: options.profile
-    });
+    const inputPath = options.inputPath!;
+    const outputPath = options.outputPath!;
+    const summary = await withDestinationPublication(
+      outputPath,
+      [inputPath],
+      options.overwrite,
+      (publishedPath) => compressPdf({
+        inputPath,
+        outputPath: publishedPath,
+        profile: options.profile,
+        signal: deps.signal
+      })
+    );
 
     if (options.json) {
       return { exitCode: 0, stdout: formatJsonSuccess(summary), stderr: "" };
@@ -97,13 +117,4 @@ export function usage(): string {
     "Usage: pdf-compressor compress <input.pdf> --output <output.pdf> [--profile conservative|balanced|aggressive] [--json]",
     ""
   ].join("\n");
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
 }

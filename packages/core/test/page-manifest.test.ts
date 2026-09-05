@@ -31,6 +31,9 @@ describe("page-manifest contract", () => {
     });
     expect(parsed.pages[0]).toEqual({ sourceId: "a", page: 2, rotate: 90 });
     expect(() => parsePageManifest({ version: 1, pages: [], extra: true })).toThrow(PageManifestError);
+    expect(() =>
+      parsePageManifest({ version: 1, pages: [{ sourceId: "a", page: 1, rotation: 90 }] })
+    ).toThrow(expect.objectContaining({ code: "MANIFEST_INVALID" }));
     expect(() => parsePageManifest({ version: 2, pages: [] })).toThrow(PageManifestError);
     expect(() => parsePageManifest({ version: 1, pages: [{ sourceId: "a", page: 1, rotate: 45 }] })).toThrow(
       expect.objectContaining({ code: "MANIFEST_INVALID_ROTATION" })
@@ -39,6 +42,9 @@ describe("page-manifest contract", () => {
       expect.objectContaining({ code: "MANIFEST_INVALID_PAGE_NUMBER" })
     );
     expect(() => parsePageManifest({ version: 1, pages: [{ sourceId: "has space", page: 1 }] })).toThrow(
+      expect.objectContaining({ code: "MANIFEST_INVALID_SOURCE_ID" })
+    );
+    expect(() => parsePageManifest({ version: 1, pages: [{ sourceId: "a=b", page: 1 }] })).toThrow(
       expect.objectContaining({ code: "MANIFEST_INVALID_SOURCE_ID" })
     );
   });

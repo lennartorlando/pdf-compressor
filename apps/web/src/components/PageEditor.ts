@@ -69,6 +69,7 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
   let downloadHref: string | null = null;
   let addError: string | null = null;
   let destroyed = false;
+  let lifecycleGeneration = 0;
   const thumbnails = new Map<number, ThumbnailHandle>();
   let observer: IntersectionObserver | null = null;
   // Pending renders stamped by grid generation. Keys embed the visible
@@ -152,19 +153,19 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
     onSelectAll: () => {
       if (exporting) return;
       editorState = selectAll(editorState);
-      refresh();
+      refreshThumbnailStates();
     },
     onClearSelection: () => {
       if (exporting) return;
       editorState = clearSelection(editorState);
-      refresh();
+      refreshThumbnailStates();
     },
     onRotateSelected: () => {
       if (exporting) return;
       for (const index of editorState.selection) {
         editorState = rotateEntry(editorState, index);
       }
-      refresh();
+      refreshThumbnailStates();
     },
     onDeleteSelected: () => {
       if (exporting) return;
@@ -246,10 +247,11 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
   }
 
   async function addFiles(incoming: File[]): Promise<void> {
-    if (exporting || incoming.length === 0) return;
+    if (destroyed || exporting || incoming.length === 0) return;
+    const generation = lifecycleGeneration;
     addError = null;
     for (const file of incoming) {
-      if (exporting) break;
+      if (destroyed || lifecycleGeneration !== generation || exporting) break;
       try {
         // Pre-allocation gate: enforce count plus per-source and combined
         // byte caps from `file.size` before touching `arrayBuffer`/PDF.js.
@@ -260,12 +262,22 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
       }
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        checkSourceCapacity(editorState, bytes.length);
+        if (destroyed || lifecycleGeneration !== generation) return;
+        // PDF.js may transfer the backing buffer to its worker.
+        const sourceBytes = bytes.byteLength;
         const handle = await loader.openDocument(bytes);
+        if (destroyed || lifecycleGeneration !== generation) {
+          try {
+            await handle.destroy();
+          } catch {
+            // Best effort.
+          }
+          return;
+        }
         try {
           editorState = addSource(editorState, {
             displayName: file.name || "PDF",
-            bytes: bytes.length,
+            bytes: sourceBytes,
             pageCount: handle.pageCount
           });
         } catch (error) {
@@ -280,6 +292,7 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
         files.set(added.id, file);
         store.registerDocument(added.id, handle);
       } catch (error) {
+        if (destroyed || lifecycleGeneration !== generation) return;
         addError = `${file.name || "PDF"}: ${editorLimitMessage(error)}`;
         if (isPasswordError(error)) {
           addError = `${file.name || "PDF"}: This file is password-protected. Page editing needs an unencrypted PDF.`;
@@ -385,7 +398,7 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
             if (exporting) return;
             editorState = rotateEntry(editorState, at);
             editorState = setFocus(editorState, at);
-            refresh();
+            refreshThumbnailStates();
           },
           onDelete: (at) => {
             if (exporting) return;
@@ -398,7 +411,7 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
               ? setSelection(editorState, [...editorState.selection, at])
               : toggleSelected(editorState, at);
             editorState = setFocus(editorState, at);
-            refreshSelectionOnly();
+            refreshThumbnailStates();
           },
           onFocus: (at) => {
             editorState = setFocus(editorState, at);
@@ -406,9 +419,6 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
         }
       );
       thumb.element.dataset["index"] = String(index);
-      thumb.element.classList.toggle("thumb--rot90", (entry.rotate ?? 0) === 90);
-      thumb.element.classList.toggle("thumb--rot180", (entry.rotate ?? 0) === 180);
-      thumb.element.classList.toggle("thumb--rot270", (entry.rotate ?? 0) === 270);
       thumbnails.set(index, thumb);
       grid.append(thumb.element);
       if (observer) observer.observe(thumb.element);
@@ -419,7 +429,7 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
     }
   }
 
-  function refreshSelectionOnly(): void {
+  function refreshThumbnailStates(): void {
     const pages = editorState.manifest.pages;
     pages.forEach((entry, index) => {
       thumbnails.get(index)?.update({
@@ -693,6 +703,7 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
     element: root,
     destroy(): void {
       destroyed = true;
+      lifecycleGeneration += 1;
       exportController?.abort();
       observer?.disconnect();
       observer = null;

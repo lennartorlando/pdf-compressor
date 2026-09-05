@@ -54,14 +54,24 @@ export class PageManifestError extends Error {
   }
 }
 
-/** Printable ASCII without whitespace, 1..64 chars (opaque local handle). */
-const SOURCE_ID_PATTERN = /^[\x21-\x7E]{1,64}$/;
+/** Printable ASCII without whitespace or "=", 1..64 chars (opaque local handle). */
+const SOURCE_ID_PATTERN = /^[\x21-\x3C\x3E-\x7E]+$/;
+const PAGE_ENTRY_KEY_LIST = ["sourceId", "page", "rotate"] as const satisfies readonly (keyof ManifestPage)[];
+const PAGE_ENTRY_KEYS: ReadonlySet<string> = new Set(PAGE_ENTRY_KEY_LIST);
+
+export function isValidSourceId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= MAX_SOURCE_ID_LENGTH &&
+    SOURCE_ID_PATTERN.test(value)
+  );
+}
 
 function assertSourceId(sourceId: string): void {
-  if (typeof sourceId !== "string" || !SOURCE_ID_PATTERN.test(sourceId)) {
+  if (!isValidSourceId(sourceId)) {
     throw new PageManifestError(
       "MANIFEST_INVALID_SOURCE_ID",
-      `Invalid sourceId: must be 1-${MAX_SOURCE_ID_LENGTH} printable ASCII characters without whitespace.`
+      `Invalid sourceId: must be 1-${MAX_SOURCE_ID_LENGTH} printable ASCII characters without whitespace or "=".`
     );
   }
 }
@@ -118,9 +128,10 @@ export function parsePageManifest(value: unknown): PageManifest {
     if (
       entryKeys.length < 2 ||
       entryKeys.length > 3 ||
+      entryKeys.some((key) => !PAGE_ENTRY_KEYS.has(key)) ||
       !entryKeys.includes("sourceId") ||
       !entryKeys.includes("page") ||
-      (entryKeys.includes("rotate") && entryKeys.length !== 3)
+      (entryKeys.length === 3 && !entryKeys.includes("rotate"))
     ) {
       throw new PageManifestError(
         "MANIFEST_INVALID",

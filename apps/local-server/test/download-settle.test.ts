@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createDownloadTracker, type DownloadLeaseSink } from "../src/server.js";
+import {
+  createDownloadTracker,
+  downloadCompletedAtBoundary,
+  type DownloadLeaseSink
+} from "../src/server.js";
 
 function recordingSink(): DownloadLeaseSink & {
   calls: string[];
@@ -23,6 +27,33 @@ function recordingSink(): DownloadLeaseSink & {
 }
 
 describe("download transfer boundary (finish-before-end race)", () => {
+  it("recognizes a fully drained source when close beats finish", () => {
+    expect(
+      downloadCompletedAtBoundary({
+        writableFinished: false,
+        writableLength: 0,
+        bytesRead: 65_536,
+        fileSize: 65_536
+      })
+    ).toBe(true);
+    expect(
+      downloadCompletedAtBoundary({
+        writableFinished: false,
+        writableLength: 0,
+        bytesRead: 131_072,
+        fileSize: 8 * 1024 * 1024
+      })
+    ).toBe(false);
+    expect(
+      downloadCompletedAtBoundary({
+        writableFinished: false,
+        writableLength: 1,
+        bytesRead: 65_536,
+        fileSize: 65_536
+      })
+    ).toBe(false);
+  });
+
   it("finish consumes synchronously even when it fires before the stream end", () => {
     const sink = recordingSink();
     const tracker = createDownloadTracker(sink);

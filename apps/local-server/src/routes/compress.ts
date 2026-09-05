@@ -9,7 +9,7 @@ import {
   type CompressionProfileName,
   type CompressionSummary
 } from "@pdf-compressor/core";
-import { LIMITS, type JobManager } from "../jobs.js";
+import { LIMITS, RETAINED_OUTPUT_CAPACITY, type JobManager } from "../jobs.js";
 import type { SessionStore } from "../session.js";
 import { writeJson } from "./edit.js";
 
@@ -45,6 +45,9 @@ function sanitizeCompressError(error: unknown): { status: number; code: string }
     if (error.message === "BODY_TOO_LARGE") return { status: 413, code: error.message };
     if (error.message === "OUTPUT_TOO_LARGE") return { status: 422, code: error.message };
     return { status: 499, code: error.message };
+  }
+  if (error instanceof Error && error.message === RETAINED_OUTPUT_CAPACITY) {
+    return { status: 429, code: RETAINED_OUTPUT_CAPACITY };
   }
   return { status: 500, code: "COMPRESSION_FAILED" };
 }
@@ -127,7 +130,7 @@ export async function handleCompressRequest(
   try {
     const outcome = await runCompressWork(req, url, ctx, jobDir, controller);
     if (outcome.retainedDir === null) {
-      await rm(jobDir, { recursive: true, force: true }).catch(() => undefined);
+      await jobs.removeDir(jobDir);
     }
     writeJson(res, outcome.status, outcome.payload);
   } finally {

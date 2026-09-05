@@ -24,6 +24,7 @@ export interface ProcessResult {
 
 const DEFAULT_MAX_STDERR_BYTES = 16 * 1024;
 const DEFAULT_MAX_STDOUT_BYTES = 32 * 1024 * 1024;
+const KILL_CONFIRMATION_TIMEOUT_MS = 1_000;
 
 /**
  * Keys a native PDF parser may observe. The child never inherits the full
@@ -101,6 +102,8 @@ export async function runProcess(
 
   return new Promise<ProcessResult>((resolve, reject) => {
     let settled = false;
+    let terminationError: CompressionError | null = null;
+    let killConfirmationTimer: ReturnType<typeof setTimeout> | undefined;
     const settleResolve = (result: ProcessResult): void => {
       if (settled) return;
       settled = true;
@@ -130,16 +133,27 @@ export async function runProcess(
 
     let stdoutBytes = 0;
     let stderrBytes = 0;
-    let stdoutTruncated = false;
     let stderrTruncated = false;
     let stdout = "";
     let stderr = "";
 
+    const requestTermination = (error: CompressionError): void => {
+      if (settled || terminationError) return;
+      terminationError = error;
+      killProcessGroup(child);
+      killConfirmationTimer = setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        child.unref();
+        settleReject(error);
+      }, KILL_CONFIRMATION_TIMEOUT_MS);
+      killConfirmationTimer.unref?.();
+    };
+
     const timer =
       options.timeoutMs !== undefined
         ? setTimeout(() => {
-            killProcessGroup(child);
-            settleReject(
+            requestTermination(
               new CompressionError("JOB_TIMEOUT", `${command} exceeded its ${options.timeoutMs} ms budget.`, {
                 command,
                 timeoutMs: options.timeoutMs
@@ -150,21 +164,20 @@ export async function runProcess(
     timer?.unref?.();
 
     const onAbort = (): void => {
-      killProcessGroup(child);
-      settleReject(new CompressionError("JOB_CANCELLED", `${command} was cancelled.`, { command }));
+      requestTermination(new CompressionError("JOB_CANCELLED", `${command} was cancelled.`, { command }));
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
     function cleanup(): void {
       if (timer !== undefined) clearTimeout(timer);
+      if (killConfirmationTimer !== undefined) clearTimeout(killConfirmationTimer);
       options.signal?.removeEventListener("abort", onAbort);
     }
 
     child.stdout?.on("data", (chunk: Buffer) => {
+      if (terminationError) return;
       if (stdoutBytes + chunk.length > maxStdoutBytes) {
-        stdoutTruncated = true;
-        killProcessGroup(child);
-        settleReject(
+        requestTermination(
           new CompressionError("ENGINE_FAILED", `${command} produced more than ${maxStdoutBytes} stdout bytes.`, {
             command
           })
@@ -176,6 +189,7 @@ export async function runProcess(
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
+      if (terminationError) return;
       if (stderrBytes >= maxStderrBytes) {
         stderrTruncated = true;
         return;
@@ -188,6 +202,7 @@ export async function runProcess(
     });
 
     child.on("error", (error: NodeJS.ErrnoException) => {
+      if (terminationError) return;
       if (error.name === "AbortError") {
         settleReject(new CompressionError("JOB_CANCELLED", `${command} was cancelled.`, { command }));
         return;
@@ -202,6 +217,10 @@ export async function runProcess(
     });
 
     child.on("close", (code) => {
+      if (terminationError) {
+        settleReject(terminationError);
+        return;
+      }
       const text = (value: string): string => value.trim();
       if (code !== null && allowedExitCodes.includes(code)) {
         settleResolve({
@@ -209,10 +228,6 @@ export async function runProcess(
           stderr: (text(stderr) + (stderrTruncated ? "\n[stderr truncated]" : "")).trim(),
           exitCode: code
         });
-        return;
-      }
-      if (stdoutTruncated && code !== null) {
-        // Truncation rejection already settled the promise.
         return;
       }
       settleReject(

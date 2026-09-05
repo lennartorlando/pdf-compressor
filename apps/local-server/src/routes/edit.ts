@@ -13,7 +13,7 @@ import {
   type CompressionProfileName
 } from "@pdf-compressor/core";
 import { parsePageManifest } from "@pdf-compressor/core/page-manifest";
-import { LIMITS, type JobManager } from "../jobs.js";
+import { LIMITS, RETAINED_OUTPUT_CAPACITY, type JobManager } from "../jobs.js";
 import { assertManifestDepth, MultipartError, streamExportMultipart } from "../multipart.js";
 import type { SessionStore } from "../session.js";
 
@@ -101,6 +101,7 @@ function sanitizeExportError(error: unknown): { status: number; code: string } {
       case "INPUT_HAS_ACTIVE_CONTENT":
       case "INSPECTION_INCOMPLETE":
       case "OUTPUT_INVALID":
+      case "OUTPUT_TOO_LARGE":
         return { status: 422, code: error.code };
       case "NATIVE_VERSION_UNSUPPORTED":
       case "ENGINE_UNAVAILABLE":
@@ -113,8 +114,9 @@ function sanitizeExportError(error: unknown): { status: number; code: string } {
         return { status: 500, code: "EXPORT_FAILED" };
     }
   }
-  if (error instanceof Error && error.message === "OUTPUT_TOO_LARGE") {
-    return { status: 422, code: "OUTPUT_TOO_LARGE" };
+  if (error instanceof Error) {
+    if (error.message === "OUTPUT_TOO_LARGE") return { status: 422, code: "OUTPUT_TOO_LARGE" };
+    if (error.message === RETAINED_OUTPUT_CAPACITY) return { status: 429, code: RETAINED_OUTPUT_CAPACITY };
   }
   return { status: 500, code: "EXPORT_FAILED" };
 }
@@ -161,10 +163,10 @@ export async function handlePageExport(
 
   try {
     const outcome = await runExportWork(req, url, ctx, jobDir, controller);
-    // Terminal cleanup completes before the response is written, so every
-    // terminal state observably leaves no non-final artifacts behind.
+    // Attempt cleanup before responding; transient failures stay registered
+    // with the job manager for its sweeper and shutdown retry.
     if (outcome.retainedDir === null) {
-      await sweepNonRetained(jobDir);
+      await jobs.removeDir(jobDir);
     }
     writeJson(res, outcome.status, outcome.payload);
   } finally {
@@ -261,46 +263,42 @@ async function runExportWork(
 
     const bindings = distinctSources.map((id, index) => ({ id, path: upload.sourcePaths[index] }));
     const destinationPath = join(jobDir, "output.pdf");
-    const growthGuard = watchOutputGrowth(destinationPath, controller);
-    try {
-      const summary = await assemblePages({
-        sources: bindings,
-        manifest,
-        destinationPath,
-        compression,
-        signal: controller.signal,
-        timeoutMs: jobs.jobTimeoutMs
-      });
-      const outputStat = await stat(destinationPath);
-      if (outputStat.size > LIMITS.maxOutputBytes) {
-        throw new Error("OUTPUT_TOO_LARGE");
-      }
-      // Keep only the chosen validated output; remove uploads immediately.
-      await Promise.all(upload.sourcePaths.map((path) => rm(path, { force: true })));
-      const retained = await jobs.retainOutput({
-        sessionId: ctx.sessionId,
-        jobDir,
-        outputPath: destinationPath,
-        pageCount: summary.pageCount
-      });
-      return {
-        status: 200,
-        payload: {
-          ok: true,
-          handle: retained.handle,
-          downloadUrl: `/api/outputs/${retained.handle}/download`,
-          status: summary.status,
-          pageCount: summary.pageCount,
-          outputBytes: summary.outputBytes,
-          engine: summary.engine,
-          warnings: summary.warnings,
-          compatWarnings: summary.compatWarnings
-        },
-        retainedDir: jobDir
-      };
-    } finally {
-      growthGuard.stop();
+    const summary = await assemblePages({
+      sources: bindings,
+      manifest,
+      destinationPath,
+      compression,
+      signal: controller.signal,
+      timeoutMs: jobs.jobTimeoutMs,
+      maxOutputBytes: LIMITS.maxOutputBytes
+    });
+    const outputStat = await stat(destinationPath);
+    if (outputStat.size > LIMITS.maxOutputBytes) {
+      throw new Error("OUTPUT_TOO_LARGE");
     }
+    // Keep only the chosen validated output; remove uploads immediately.
+    await Promise.all(upload.sourcePaths.map((path) => rm(path, { force: true })));
+    const retained = await jobs.retainOutput({
+      sessionId: ctx.sessionId,
+      jobDir,
+      outputPath: destinationPath,
+      pageCount: summary.pageCount
+    });
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        handle: retained.handle,
+        downloadUrl: `/api/outputs/${retained.handle}/download`,
+        status: summary.status,
+        pageCount: summary.pageCount,
+        outputBytes: summary.outputBytes,
+        engine: summary.engine,
+        warnings: summary.warnings,
+        compatWarnings: summary.compatWarnings
+      },
+      retainedDir: jobDir
+    };
   } catch (error) {
     const mapped = sanitizeExportError(error);
     const message =
@@ -312,31 +310,5 @@ async function runExportWork(
             ? "Export failed."
             : "Export was rejected.";
     return fail(mapped.status, mapped.code, message);
-  }
-}
-
-/** Abort the job when a candidate grows past the output cap. */
-function watchOutputGrowth(candidatePath: string, controller: AbortController): { stop(): void } {
-  const timer = setInterval(() => {
-    void stat(candidatePath)
-      .then((fileStat) => {
-        if (fileStat.size > LIMITS.maxOutputBytes) controller.abort();
-      })
-      .catch(() => undefined);
-  }, 250);
-  timer.unref?.();
-  return {
-    stop() {
-      clearInterval(timer);
-    }
-  };
-}
-
-async function sweepNonRetained(jobDir: string): Promise<void> {
-  // Retained outputs keep their whole job directory; anything else is removed.
-  try {
-    await rm(jobDir, { recursive: true, force: true });
-  } catch {
-    // Best effort: startup sweeps reclaim anything left behind.
   }
 }

@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { randomBytes } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import * as core from "@pdf-compressor/core";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildTestPdf, writeTestPdf } from "../../../packages/core/test/pdf-fixtures.js";
 import { JobManager } from "../src/jobs.js";
 import { createLocalServer } from "../src/server.js";
@@ -326,6 +327,74 @@ describe("page export route", () => {
       expect(await readdir(jobs.tempRoot)).toEqual(before);
     } finally {
       jobs.releaseNative();
+    }
+  });
+
+  it("passes the output cap to core and maps candidate overflow", async () => {
+    const auth = await launch();
+    await jobs.sweepStartupOrphans();
+    const before = await readdir(jobs.tempRoot);
+    const manifest = JSON.stringify({ version: 1, pages: [{ sourceId: "a", page: 1 }] });
+    const upload = buildMultipart([
+      { name: "manifest", contentType: "application/json", data: manifest },
+      { name: "source", filename: "source.pdf", contentType: "application/pdf", data: fixtureA }
+    ]);
+    const assemble = vi.spyOn(core, "assemblePages").mockImplementationOnce(async (options) => {
+      expect(options.maxOutputBytes).toBe(150 * 1024 * 1024);
+      throw new core.CompressionError("OUTPUT_TOO_LARGE", "candidate crossed its byte cap");
+    });
+    try {
+      const result = await call("/api/pages/export", {
+        method: "POST",
+        headers: authedHeaders(auth, {
+          "content-type": upload.contentType,
+          "content-length": String(upload.body.length)
+        }),
+        body: upload.body
+      });
+      expect(result.status).toBe(422);
+      expect(JSON.parse(result.body.toString("utf8"))).toMatchObject({ ok: false, code: "OUTPUT_TOO_LARGE" });
+      expect(await readdir(jobs.tempRoot)).toEqual(before);
+    } finally {
+      assemble.mockRestore();
+    }
+  });
+
+  it("returns a stable capacity response when every retained output is leased", async () => {
+    const auth = await launch();
+    const sessionId = decodeURIComponent(auth.cookie.split("=")[1]);
+    const leasedHandles: string[] = [];
+    try {
+      for (let index = 0; index < 2; index += 1) {
+        const { dir } = await jobs.newJobDir("job-");
+        const outputPath = join(dir, "output.pdf");
+        await writeFile(outputPath, fixtureA);
+        const retained = await jobs.retainOutput({ sessionId, jobDir: dir, outputPath, pageCount: 2 });
+        expect(jobs.lease(retained.handle, sessionId).outcome).toBe("leased");
+        leasedHandles.push(retained.handle);
+      }
+
+      const manifest = JSON.stringify({ version: 1, pages: [{ sourceId: "a", page: 1 }] });
+      const upload = buildMultipart([
+        { name: "manifest", contentType: "application/json", data: manifest },
+        { name: "source", filename: "source.pdf", contentType: "application/pdf", data: fixtureA }
+      ]);
+      const result = await call("/api/pages/export", {
+        method: "POST",
+        headers: authedHeaders(auth, {
+          "content-type": upload.contentType,
+          "content-length": String(upload.body.length)
+        }),
+        body: upload.body
+      });
+      expect(result.status).toBe(429);
+      expect(JSON.parse(result.body.toString("utf8"))).toMatchObject({
+        ok: false,
+        code: "RETAINED_OUTPUT_CAPACITY"
+      });
+      expect(jobs.retainedCount()).toBe(2);
+    } finally {
+      for (const handle of leasedHandles) await jobs.consume(handle, sessionId);
     }
   });
 

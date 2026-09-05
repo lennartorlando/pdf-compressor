@@ -2,7 +2,12 @@ import { createWriteStream } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { IncomingMessage } from "node:http";
-import Busboy from "@fastify/busboy";
+import {
+  Busboy,
+  type BusboyFileStream,
+  type BusboyHeaders,
+  type BusboyInstance
+} from "@fastify/busboy";
 import { LIMITS } from "./jobs.js";
 
 export type MultipartFailureCode =
@@ -43,22 +48,6 @@ export interface StreamedUpload {
   totalBytes: number;
 }
 
-interface FileStreamLike {
-  truncated: boolean;
-  bytesRead: number;
-  pipe(dest: NodeJS.WritableStream): NodeJS.WritableStream;
-  pause(): void;
-  resume(): void;
-  destroy(): void;
-  on(event: string, listener: (...args: never[]) => void): void;
-  once(event: string, listener: (...args: never[]) => void): void;
-}
-
-interface BusboyInstanceLike {
-  on(event: string, listener: (...args: never[]) => void): void;
-  emit(event: string, ...args: never[]): boolean;
-}
-
 /**
  * Stream exactly one bounded manifest field plus generated source parts
  * into a private per-job directory. Each source is written once to a
@@ -76,6 +65,7 @@ export function streamExportMultipart(
   }
 
   return new Promise<StreamedUpload>((resolve, reject) => {
+    let busboy: BusboyInstance;
     let settled = false;
     const writtenPaths: string[] = [];
     const cleanup = (): Promise<void> =>
@@ -85,7 +75,7 @@ export function streamExportMultipart(
       if (settled) return;
       settled = true;
       try {
-        req.unpipe(busboy as unknown as import("node:stream").Writable);
+        req.unpipe(busboy);
       } catch {
         // Best effort: the parser may already be torn down.
       }
@@ -98,11 +88,10 @@ export function streamExportMultipart(
       resolve(upload);
     };
 
-    let busboy: BusboyInstanceLike;
     try {
-      const ctor = Busboy as unknown as new (options: Record<string, unknown>) => BusboyInstanceLike;
-      busboy = new ctor({
-        headers: req.headers,
+      const headers: BusboyHeaders = { ...req.headers, "content-type": contentType };
+      busboy = new Busboy({
+        headers,
         limits: {
           fieldNameSize: 128,
           fieldSize: LIMITS.maxManifestBytes + 1,
@@ -138,7 +127,7 @@ export function streamExportMultipart(
       signal?.removeEventListener("abort", onAbort);
     };
 
-    busboy.on("field", ((fieldname: string, value: string, _truncated: boolean, valueTruncated: boolean) => {
+    busboy.on("field", (fieldname, value, _truncated, valueTruncated) => {
       partCount += 1;
       if (partCount > LIMITS.maxParts) {
         fail(new MultipartError("TOO_MANY_PARTS", "Too many multipart sections.", 413));
@@ -165,9 +154,9 @@ export function streamExportMultipart(
         return;
       }
       manifestRaw = value;
-    }) as (...args: never[]) => void);
+    });
 
-    busboy.on("file", ((fieldname: string, stream: FileStreamLike) => {
+    busboy.on("file", (fieldname, stream: BusboyFileStream) => {
       partCount += 1;
       if (partCount > LIMITS.maxParts) {
         stream.resume();
@@ -194,7 +183,7 @@ export function streamExportMultipart(
       let fileBytes = 0;
       let fileFailed = false;
       const writeDone = new Promise<void>((resolveWrite, rejectWrite) => {
-        stream.on("data", ((chunk: Buffer) => {
+        stream.on("data", (chunk: Buffer) => {
           const size = chunk.length;
           fileBytes += size;
           totalBytes += size;
@@ -219,16 +208,16 @@ export function streamExportMultipart(
             stream.pause();
             out.once("drain", () => stream.resume());
           }
-        }) as (...args: never[]) => void);
-        stream.on("limit", (() => {
+        });
+        stream.on("limit", () => {
           fileFailed = true;
           fail(new MultipartError("SOURCE_TOO_LARGE", "A source exceeds its byte cap.", 413));
           out.destroy();
           rejectWrite(new Error("source too large"));
-        }) as (...args: never[]) => void);
-        stream.on("end", (() => {
+        });
+        stream.on("end", () => {
           if (fileFailed) return;
-          if ((stream.truncated as boolean) === true) {
+          if (stream.truncated) {
             fileFailed = true;
             fail(new MultipartError("SOURCE_TOO_LARGE", "A source exceeds its byte cap.", 413));
             out.destroy();
@@ -236,13 +225,13 @@ export function streamExportMultipart(
             return;
           }
           out.end(() => resolveWrite());
-        }) as (...args: never[]) => void);
-        stream.on("error", (() => {
+        });
+        stream.on("error", () => {
           fileFailed = true;
           out.destroy();
           fail(new MultipartError("UPLOAD_ABORTED", "A source stream failed.", 499));
           rejectWrite(new Error("source stream failed"));
-        }) as (...args: never[]) => void);
+        });
         out.on("error", () => {
           fileFailed = true;
           stream.destroy();
@@ -255,30 +244,30 @@ export function streamExportMultipart(
       // `finish` after an unpipe, so a capped upload cannot surface an
       // unhandled rejection. The `finish` handler still settles the outcome.
       writeDone.catch(() => undefined);
-    }) as (...args: never[]) => void);
+    });
 
-    busboy.on("partsLimit", (() => {
+    busboy.on("partsLimit", () => {
       fail(new MultipartError("TOO_MANY_PARTS", "Too many multipart sections.", 413));
-    }) as (...args: never[]) => void);
+    });
 
-    busboy.on("filesLimit", (() => {
+    busboy.on("filesLimit", () => {
       fail(new MultipartError("TOO_MANY_SOURCES", "Too many source files.", 413));
-    }) as (...args: never[]) => void);
+    });
 
-    busboy.on("fieldsLimit", (() => {
+    busboy.on("fieldsLimit", () => {
       fail(new MultipartError("DUPLICATE_MANIFEST", "Only one manifest is accepted.", 400));
-    }) as (...args: never[]) => void);
+    });
 
-    busboy.on("error", ((err: Error) => {
-      const message = err?.message ?? "";
+    busboy.on("error", (error) => {
+      const message = error instanceof Error ? error.message : String(error ?? "");
       if (/header/i.test(message)) {
         fail(new MultipartError("TOO_MANY_HEADERS", "Too many multipart headers.", 413));
         return;
       }
       fail(new MultipartError("UPLOAD_ABORTED", "Upload could not be parsed.", 400));
-    }) as (...args: never[]) => void);
+    });
 
-    busboy.on("finish", (() => {
+    busboy.on("finish", () => {
       if (settled) return;
       if (manifestRaw === null) {
         fail(new MultipartError("MISSING_MANIFEST", "Export requires exactly one manifest.", 400));
@@ -294,11 +283,11 @@ export function streamExportMultipart(
         }
         succeed({ manifestRaw: manifest, sourcePaths, sourceBytes, totalBytes });
       });
-    }) as (...args: never[]) => void);
+    });
 
     req.on("aborted", () => fail(new MultipartError("UPLOAD_ABORTED", "Client disconnected during upload.", 499)));
     req.on("error", () => fail(new MultipartError("UPLOAD_ABORTED", "Upload transport failed.", 499)));
-    req.pipe(busboy as unknown as import("node:stream").Writable);
+    req.pipe(busboy);
   });
 }
 

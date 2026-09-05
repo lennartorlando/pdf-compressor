@@ -132,18 +132,9 @@ export interface AddSourceInput {
  * PDF.js. Duplicate display names receive distinct opaque ids.
  */
 export function addSource(state: EditorState, input: AddSourceInput): EditorState {
-  if (state.sources.length >= EDITOR_LIMITS.maxSources) {
-    throw new EditorLimitError("TOO_MANY_SOURCES", `At most ${EDITOR_LIMITS.maxSources} source PDFs are supported.`);
-  }
-  if (!Number.isInteger(input.bytes) || input.bytes < 1 || input.bytes > EDITOR_LIMITS.maxSourceBytes) {
-    throw new EditorLimitError("SOURCE_TOO_LARGE", "A source exceeds its 100 MiB byte cap.");
-  }
+  checkSourceCapacity(state, input.bytes);
   if (!Number.isInteger(input.pageCount) || input.pageCount < 1) {
     throw new EditorLimitError("INVALID_PAGE_COUNT", "A source must report at least one page.");
-  }
-  const totalBytes = state.sources.reduce((sum, source) => sum + source.bytes, 0) + input.bytes;
-  if (totalBytes > EDITOR_LIMITS.maxTotalBytes) {
-    throw new EditorLimitError("TOTAL_TOO_LARGE", "Sources exceed the 100 MiB combined cap.");
   }
   if (state.manifest.pages.length + input.pageCount > EDITOR_LIMITS.maxOutputPages) {
     throw new EditorLimitError(
@@ -196,7 +187,19 @@ export function removeSource(state: EditorState, sourceId: string): EditorState 
 
 /** Move the entry at `fromIndex` to `toIndex`, immutably. */
 export function moveEntry(state: EditorState, fromIndex: number, toIndex: number): EditorState {
-  return withManifest(state, movePage(state.manifest, fromIndex, toIndex));
+  const manifest = movePage(state.manifest, fromIndex, toIndex);
+  const remap = (index: number): number => {
+    if (index === fromIndex) return toIndex;
+    if (fromIndex < toIndex && index > fromIndex && index <= toIndex) return index - 1;
+    if (fromIndex > toIndex && index >= toIndex && index < fromIndex) return index + 1;
+    return index;
+  };
+  return {
+    sources: state.sources,
+    manifest,
+    selection: pruneSelection(manifest.pages.length, state.selection.map(remap)),
+    focusIndex: state.focusIndex === null ? null : remap(state.focusIndex)
+  };
 }
 
 /** Rotate one entry 90 degrees clockwise, immutably. */
@@ -206,7 +209,19 @@ export function rotateEntry(state: EditorState, index: number): EditorState {
 
 /** Delete entries at the given positions, immutably. */
 export function deleteEntries(state: EditorState, indexes: readonly number[]): EditorState {
-  return withManifest(state, removePages(state.manifest, indexes));
+  const manifest = removePages(state.manifest, indexes);
+  const removed = new Set(indexes);
+  const remap = (index: number): number => index - [...removed].filter((position) => position < index).length;
+  return {
+    sources: state.sources,
+    manifest,
+    selection: pruneSelection(
+      manifest.pages.length,
+      state.selection.filter((index) => !removed.has(index)).map(remap)
+    ),
+    focusIndex:
+      state.focusIndex === null || removed.has(state.focusIndex) ? null : remap(state.focusIndex)
+  };
 }
 
 /** Restore the initial order: every source appended in load order, unrotated. */

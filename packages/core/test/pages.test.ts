@@ -44,6 +44,8 @@ interface FakeState {
   gsDelta: number;
   /** Corrupt the gs candidate validation (wrong page count). */
   gsCandidatePages: number | null;
+  gsVersion: string;
+  gsError?: CompressionError;
   onMutation?: () => void | Promise<void>;
   failJsonWith?: string;
 }
@@ -63,7 +65,8 @@ function makeFakeRunner(state: FakeState, pagesByPath: Map<string, number>): Nat
       return okResult("qpdf version 12.4.1\nRun qpdf --copyright to see copyright and license information.");
     }
     if (command === "gs" && args[0] === "--version") {
-      return okResult("10.07.1");
+      if (state.gsError) throw state.gsError;
+      return okResult(state.gsVersion);
     }
     if (command === "qpdf" && args[0] === "--json") {
       if (state.failJsonWith !== undefined) {
@@ -99,6 +102,7 @@ function makeFakeRunner(state: FakeState, pagesByPath: Map<string, number>): Nat
       return okResult("");
     }
     if (command === "gs") {
+      if (state.gsError) throw state.gsError;
       state.gsCalls += 1;
       const outputFlag = args.find((arg) => arg.startsWith("-sOutputFile="));
       const input = args[args.length - 1];
@@ -157,10 +161,39 @@ async function assembleWith(
 }
 
 function freshState(overrides: Partial<FakeState> = {}): FakeState {
-  return { mutations: 0, gsCalls: 0, calls: [], gsDelta: 50, gsCandidatePages: null, ...overrides };
+  return {
+    mutations: 0,
+    gsCalls: 0,
+    calls: [],
+    gsDelta: 50,
+    gsCandidatePages: null,
+    gsVersion: "10.07.1",
+    ...overrides
+  };
 }
 
 describe("assemblePages validation", () => {
+  it("rejects source bindings that cannot round-trip through CLI binding syntax", async () => {
+    const setup = await setupTwoSources();
+    const state = freshState();
+    try {
+      await expect(
+        assembleWith(
+          {
+            sources: [{ id: "a=b", path: setup.bindings[0].path }],
+            destinationPath: join(setup.dir, "out.pdf"),
+            manifest: { version: 1, pages: [{ sourceId: "a=b", page: 1, rotate: 0 }] }
+          },
+          state,
+          setup.pagesByPath
+        )
+      ).rejects.toMatchObject({ code: "MANIFEST_INVALID" });
+      expect(state.calls).toHaveLength(0);
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
   it("rejects duplicate source ids without native work", async () => {
     const setup = await setupTwoSources();
     const state = freshState();
@@ -179,6 +212,31 @@ describe("assemblePages validation", () => {
         )
       ).rejects.toMatchObject({ code: "MANIFEST_DUPLICATE_SOURCE" });
       expect(state.calls).toHaveLength(0);
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("ignores unreferenced bindings after still validating duplicate ids", async () => {
+    const setup = await setupTwoSources();
+    const state = freshState();
+    const missing = join(setup.dir, "unused-missing.pdf");
+    try {
+      const summary = await assembleWith(
+        {
+          sources: [setup.bindings[0], { id: "unused", path: missing }],
+          destinationPath: join(setup.dir, "out.pdf"),
+          manifest: createManifest([{ sourceId: "a", page: 1 }])
+        },
+        state,
+        setup.pagesByPath
+      );
+      expect(summary.sourceHashes).toEqual({ a: await sha256File(setup.bindings[0].path) });
+      expect(state.calls.some((call) => call.includes(missing))).toBe(false);
+      const mutation = state.calls.find((call) => call.includes("--pages"));
+      expect(mutation).toContain(`--file=${setup.bindings[0].path}`);
+      expect(mutation).not.toContain(`--file=${missing}`);
+      expect(mutation).not.toContain("--empty");
     } finally {
       await setup.cleanup();
     }
@@ -335,6 +393,31 @@ describe("assemblePages validation", () => {
     }
   });
 
+  it("preserves encrypted-marker detection across streaming chunk boundaries", async () => {
+    const setup = await setupTwoSources();
+    const splitMarker = join(setup.dir, "split-encrypt.pdf");
+    await writeFile(
+      splitMarker,
+      Buffer.concat([
+        Buffer.from("%PDF-1.7\n", "latin1"),
+        Buffer.alloc(65_532 - 9, 0x20),
+        Buffer.from("/Encrypt trailer", "latin1")
+      ])
+    );
+    try {
+      await expect(
+        assemblePages({
+          sources: [{ id: "split", path: splitMarker }],
+          manifest: createManifest([{ sourceId: "split", page: 1 }]),
+          destinationPath: join(setup.dir, "split-out.pdf"),
+          run: makeFakeRunner(freshState(), new Map([[splitMarker, 1]]))
+        })
+      ).rejects.toMatchObject({ code: "INPUT_ENCRYPTED" });
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
   it("rejects unsupported native versions", async () => {
     const setup = await setupTwoSources();
     try {
@@ -372,6 +455,70 @@ describe("assemblePages validation", () => {
 });
 
 describe("assemblePages candidates", () => {
+  it.each([
+    "ENGINE_FAILED",
+    "ENGINE_UNAVAILABLE",
+    "JOB_TIMEOUT"
+  ] as const)("falls back to qpdf when optional Ghostscript fails with %s", async (code) => {
+    const setup = await setupTwoSources();
+    const state = freshState({ gsError: new CompressionError(code, `gs ${code}`) });
+    const dest = join(setup.dir, "out.pdf");
+    try {
+      const summary = await assembleWith(
+        { sources: setup.bindings, destinationPath: dest, compression: "balanced" },
+        state,
+        setup.pagesByPath
+      );
+      expect(summary.status).toBe("no_gain");
+      expect(summary.engine).toBe("qpdf");
+      expect(summary.warnings.join("\n")).toContain(code);
+      await expect(stat(dest)).resolves.toBeTruthy();
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("falls back to qpdf when the optional Ghostscript version is unsupported", async () => {
+    const setup = await setupTwoSources();
+    const state = freshState({ gsVersion: "10.06.0" });
+    try {
+      const summary = await assembleWith(
+        {
+          sources: setup.bindings,
+          destinationPath: join(setup.dir, "out.pdf"),
+          compression: "balanced"
+        },
+        state,
+        setup.pagesByPath
+      );
+      expect(summary.status).toBe("no_gain");
+      expect(summary.engine).toBe("qpdf");
+      expect(summary.warnings.join("\n")).toContain("NATIVE_VERSION_UNSUPPORTED");
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("preserves explicit cancellation from optional Ghostscript", async () => {
+    const setup = await setupTwoSources();
+    const state = freshState({ gsError: new CompressionError("JOB_CANCELLED", "cancelled") });
+    try {
+      await expect(
+        assembleWith(
+          {
+            sources: setup.bindings,
+            destinationPath: join(setup.dir, "out.pdf"),
+            compression: "balanced"
+          },
+          state,
+          setup.pagesByPath
+        )
+      ).rejects.toMatchObject({ code: "JOB_CANCELLED" });
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
   it("delivers the qpdf assembly with no_gain when Ghostscript is larger", async () => {
     const setup = await setupTwoSources();
     const state = freshState({ gsDelta: 64 });
@@ -454,6 +601,49 @@ describe("assemblePages candidates", () => {
       expect(summary.engine).toBe("qpdf");
       expect(state.gsCalls).toBe(0);
       expect(state.mutations).toBe(1);
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("rejects an oversized qpdf candidate through the core byte limit", async () => {
+    const setup = await setupTwoSources();
+    const state = freshState();
+    try {
+      await expect(
+        assembleWith(
+          {
+            sources: setup.bindings,
+            destinationPath: join(setup.dir, "out.pdf"),
+            maxOutputBytes: 32
+          },
+          state,
+          setup.pagesByPath
+        )
+      ).rejects.toMatchObject({ code: "OUTPUT_TOO_LARGE" });
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("falls back when only the optional Ghostscript candidate exceeds the core byte limit", async () => {
+    const setup = await setupTwoSources();
+    const state = freshState({ gsDelta: 64 });
+    const assemblyBytes = (await stat(setup.bindings[0].path)).size;
+    try {
+      const summary = await assembleWith(
+        {
+          sources: setup.bindings,
+          destinationPath: join(setup.dir, "out.pdf"),
+          compression: "balanced",
+          maxOutputBytes: assemblyBytes
+        },
+        state,
+        setup.pagesByPath
+      );
+      expect(summary.status).toBe("no_gain");
+      expect(summary.engine).toBe("qpdf");
+      expect(summary.warnings.join("\n")).toContain("OUTPUT_TOO_LARGE");
     } finally {
       await setup.cleanup();
     }

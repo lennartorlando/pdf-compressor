@@ -1,7 +1,27 @@
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { minimalProcessEnv, runProcess } from "../src/engines/process.js";
 
 const NODE = process.execPath;
+
+async function waitForFile(path: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    try {
+      await stat(path);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error(`Timed out waiting for ${path}`);
+}
+
+function expectProcessGone(pid: number): void {
+  expect(() => process.kill(pid, 0)).toThrow();
+}
 
 describe("hardened native process wrapper", () => {
   it("captures stdout and stderr without a shell", async () => {
@@ -52,18 +72,41 @@ describe("hardened native process wrapper", () => {
   });
 
   it("enforces a timeout with JOB_TIMEOUT and terminates the group", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pdf-process-timeout-"));
+    const pidPath = join(dir, "pid");
     const started = Date.now();
-    await expect(
-      runProcess(NODE, ["-e", "setInterval(()=>{},1000);"], { timeoutMs: 200 })
-    ).rejects.toMatchObject({ code: "JOB_TIMEOUT" });
-    expect(Date.now() - started).toBeLessThan(5000);
+    try {
+      await expect(
+        runProcess(
+          NODE,
+          ["-e", `require("node:fs").writeFileSync(${JSON.stringify(pidPath)},String(process.pid));setInterval(()=>{},1000);`],
+          { timeoutMs: 200 }
+        )
+      ).rejects.toMatchObject({ code: "JOB_TIMEOUT" });
+      expectProcessGone(Number(await readFile(pidPath, "utf8")));
+      expect(Date.now() - started).toBeLessThan(5000);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("propagates abort as JOB_CANCELLED", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pdf-process-abort-"));
+    const pidPath = join(dir, "pid");
     const controller = new AbortController();
-    const pending = runProcess(NODE, ["-e", "setInterval(()=>{},1000);"], { signal: controller.signal });
-    controller.abort();
-    await expect(pending).rejects.toMatchObject({ code: "JOB_CANCELLED" });
+    try {
+      const pending = runProcess(
+        NODE,
+        ["-e", `require("node:fs").writeFileSync(${JSON.stringify(pidPath)},String(process.pid));setInterval(()=>{},1000);`],
+        { signal: controller.signal }
+      );
+      await waitForFile(pidPath);
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ code: "JOB_CANCELLED" });
+      expectProcessGone(Number(await readFile(pidPath, "utf8")));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("rejects immediately when already aborted", async () => {
@@ -79,5 +122,25 @@ describe("hardened native process wrapper", () => {
       maxStderrBytes: 1024
     });
     expect(result.stderr.length).toBeLessThanOrEqual(1100);
+  });
+
+  it("waits for process close after stdout overflow", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pdf-process-overflow-"));
+    const pidPath = join(dir, "pid");
+    try {
+      await expect(
+        runProcess(
+          NODE,
+          [
+            "-e",
+            `require("node:fs").writeFileSync(${JSON.stringify(pidPath)},String(process.pid));process.stdout.write("x".repeat(100000));setInterval(()=>{},1000);`
+          ],
+          { maxStdoutBytes: 128 }
+        )
+      ).rejects.toMatchObject({ code: "ENGINE_FAILED" });
+      expectProcessGone(Number(await readFile(pidPath, "utf8")));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

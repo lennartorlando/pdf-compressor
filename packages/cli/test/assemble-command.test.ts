@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -43,6 +43,7 @@ interface FakeState {
   /** Force every --json inspection to report these objects (e.g. signatures). */
   objects: Record<string, unknown>;
   qpdfVersion: string;
+  mutationError?: CompressionError;
 }
 
 function makeFakeRunner(state: FakeState, pagesByPath: Map<string, number>): NativeRunner {
@@ -75,6 +76,7 @@ function makeFakeRunner(state: FakeState, pagesByPath: Map<string, number>): Nat
     }
     if (command === "qpdf" && args.includes("--pages")) {
       state.mutations += 1;
+      if (state.mutationError) throw state.mutationError;
       const candidate = args[args.length - 1];
       const firstFile = args.find((arg) => arg.startsWith("--file="))?.slice("--file=".length);
       if (!firstFile) throw new Error("fake: no --file group");
@@ -175,6 +177,19 @@ describe("parseAssembleArgs", () => {
     expect(() => parseAssembleArgs(["--source", "a=a.pdf", "--output", "o.pdf"])).toThrow(
       "Missing --manifest"
     );
+  });
+
+  it("keeps equals signs in source paths", () => {
+    expect(
+      parseAssembleArgs([
+        "--source",
+        "a=folder/name=revision.pdf",
+        "--manifest",
+        "m.json",
+        "--output",
+        "o.pdf"
+      ]).sources
+    ).toEqual([{ id: "a", path: "folder/name=revision.pdf" }]);
   });
 });
 
@@ -334,8 +349,15 @@ describe("runAssembleCommand", () => {
     try {
       const dest = join(setup.dir, "out.pdf");
       await writeFile(dest, "already here");
+      const baseRunner = makeFakeRunner(freshState(), pagesByPath);
+      const run: NativeRunner = async (command, args, options) => {
+        if (command === "qpdf" && args.includes("--pages")) {
+          expect(await readFile(dest, "utf8")).toBe("already here");
+        }
+        return baseRunner(command, args, options);
+      };
       const result = await runAssembleCommand(assembleArgs(setup, "out.pdf", ["--overwrite"]), {
-        run: makeFakeRunner(freshState(), pagesByPath)
+        run
       });
       expect(result.exitCode).toBe(0);
       expect((expectSingleJsonObject(result.stdout) as { ok: boolean }).ok).toBe(true);
@@ -343,6 +365,87 @@ describe("runAssembleCommand", () => {
     } finally {
       await setup.cleanup();
     }
+  });
+
+  it("refuses overwrite when the destination is a hard-link alias of a source", async () => {
+    const setup = await setupTwoSources();
+    const destinationPath = join(setup.dir, "out.pdf");
+    try {
+      const sourceHash = await sha256File(setup.aPath);
+      await link(setup.aPath, destinationPath);
+      const result = await runAssembleCommand(assembleArgs(setup, "out.pdf", ["--overwrite"]), {
+        run: makeFakeRunner(freshState(), new Map([
+          [setup.aPath, 3],
+          [setup.bPath, 2]
+        ]))
+      });
+      expect(result.exitCode).toBe(2);
+      expect(expectSingleJsonObject(result.stdout)).toMatchObject({
+        ok: false,
+        code: "OUTPUT_WOULD_OVERWRITE_INPUT"
+      });
+      expect(await sha256File(setup.aPath)).toBe(sourceHash);
+      expect(await sha256File(destinationPath)).toBe(sourceHash);
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("preserves an overwritten destination when a referenced input is missing", async () => {
+    const setup = await setupTwoSources();
+    const destinationPath = join(setup.dir, "out.pdf");
+    const manifestPath = join(setup.dir, "single.json");
+    try {
+      await writeFile(destinationPath, "original destination");
+      await writeFile(manifestPath, JSON.stringify({ version: 1, pages: [{ sourceId: "a", page: 1 }] }));
+      const result = await runAssembleCommand(
+        [
+          "--source",
+          `a=${join(setup.dir, "missing.pdf")}`,
+          "--manifest",
+          manifestPath,
+          "--output",
+          destinationPath,
+          "--overwrite",
+          "--json"
+        ],
+        { run: makeFakeRunner(freshState(), new Map()) }
+      );
+      expect(result.exitCode).toBe(2);
+      expect(await readFile(destinationPath, "utf8")).toBe("original destination");
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it.each([
+    ["native failure", new CompressionError("ENGINE_FAILED", "native failure")],
+    ["timeout", new CompressionError("JOB_TIMEOUT", "timed out")],
+    ["cancellation", new CompressionError("JOB_CANCELLED", "cancelled")]
+  ])("preserves an overwritten destination after %s", async (_label, mutationError) => {
+    const setup = await setupTwoSources();
+    const destinationPath = join(setup.dir, "out.pdf");
+    try {
+      await writeFile(destinationPath, "original destination");
+      const result = await runAssembleCommand(assembleArgs(setup, "out.pdf", ["--overwrite"]), {
+        run: makeFakeRunner(freshState({ mutationError }), new Map([
+          [setup.aPath, 3],
+          [setup.bPath, 2]
+        ]))
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(await readFile(destinationPath, "utf8")).toBe("original destination");
+      expect((await readdir(setup.dir)).some((name) => name.includes("overwrite"))).toBe(false);
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("returns usage errors as one JSON object when --json is present", async () => {
+    const result = await runAssembleCommand(["--json"]);
+    expect(result.exitCode).toBe(64);
+    expect(result.stderr).toBe("");
+    expect(expectSingleJsonObject(result.stdout)).toMatchObject({ ok: false, code: "USAGE" });
   });
 
   it("blocks signed inputs without writing a destination", async () => {

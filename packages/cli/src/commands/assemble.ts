@@ -1,4 +1,4 @@
-import { lstat, readFile, realpath, rm, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   CompressionError,
@@ -13,7 +13,14 @@ import {
   parsePageManifest,
   type PageManifest
 } from "@pdf-compressor/core/page-manifest";
-import { exitCodeFor, formatJsonError, formatJsonSuccess, type CliResult } from "../output.js";
+import { withDestinationPublication } from "../destination.js";
+import {
+  exitCodeFor,
+  formatJsonError,
+  formatJsonSuccess,
+  usageErrorResult,
+  type CliResult
+} from "../output.js";
 
 export interface AssembleCommandOptions {
   sources: PageSourceBinding[];
@@ -131,71 +138,6 @@ async function readManifest(manifestPath: string): Promise<PageManifest> {
   }
 }
 
-/**
- * Explicit --overwrite removes a pre-existing destination before the core
- * runs, but never an alias of a source. The core no-clobber publication
- * still guards a destination that appears mid-export.
- */
-async function applyOverwritePolicy(
-  destinationPath: string,
-  sources: readonly PageSourceBinding[],
-  overwrite: boolean
-): Promise<void> {
-  for (const source of sources) {
-    if (destinationPath === source.path) {
-      throw new CompressionError(
-        "OUTPUT_WOULD_OVERWRITE_INPUT",
-        "Output path must be different from every source PDF."
-      );
-    }
-  }
-  let destinationStat;
-  try {
-    destinationStat = await lstat(destinationPath);
-  } catch {
-    return;
-  }
-  if (!destinationStat) return;
-  if (!overwrite) return;
-  await assertNoSourceAlias(destinationPath, sources);
-  await rm(destinationPath, { force: true });
-}
-
-async function assertNoSourceAlias(
-  destinationPath: string,
-  sources: readonly PageSourceBinding[]
-): Promise<void> {
-  const sameIdentity = async (left: string, right: string): Promise<boolean> => {
-    try {
-      const [leftStat, rightStat, leftReal, rightReal] = await Promise.all([
-        stat(left),
-        stat(right),
-        realpath(left),
-        realpath(right)
-      ]);
-      if (leftReal === rightReal) return true;
-      const leftId = leftStat as unknown as { dev?: number; ino?: number };
-      const rightId = rightStat as unknown as { dev?: number; ino?: number };
-      return (
-        typeof leftId.dev === "number" &&
-        typeof rightId.dev === "number" &&
-        leftId.dev === rightId.dev &&
-        leftId.ino === rightId.ino
-      );
-    } catch {
-      return false;
-    }
-  };
-  for (const source of sources) {
-    if (await sameIdentity(destinationPath, source.path)) {
-      throw new CompressionError(
-        "OUTPUT_WOULD_OVERWRITE_INPUT",
-        "Output path aliases a source PDF and would overwrite it."
-      );
-    }
-  }
-}
-
 export async function runAssembleCommand(
   args: string[],
   deps: AssembleCommandDeps = {}
@@ -204,6 +146,9 @@ export async function runAssembleCommand(
   try {
     options = parseAssembleArgs(args);
   } catch (error) {
+    if (args.includes("--json")) {
+      return usageErrorResult(error);
+    }
     return {
       exitCode: 64,
       stdout: "",
@@ -217,15 +162,19 @@ export async function runAssembleCommand(
     // adapter resolves invocation-relative paths to absolute paths here.
     const sources = options.sources.map((source) => ({ id: source.id, path: resolve(source.path) }));
     const destinationPath = resolve(options.destinationPath);
-    await applyOverwritePolicy(destinationPath, sources, options.overwrite);
-    const summary = await assemblePages({
-      sources,
-      manifest,
+    const summary = await withDestinationPublication(
       destinationPath,
-      compression: options.compression,
-      signal: deps.signal,
-      run: deps.run
-    });
+      sources.map((source) => source.path),
+      options.overwrite,
+      (outputPath) => assemblePages({
+        sources,
+        manifest,
+        destinationPath: outputPath,
+        compression: options.compression,
+        signal: deps.signal,
+        run: deps.run
+      })
+    );
 
     if (options.json) {
       return { exitCode: 0, stdout: formatJsonSuccess(summary), stderr: "" };

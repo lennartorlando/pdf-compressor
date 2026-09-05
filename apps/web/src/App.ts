@@ -55,8 +55,9 @@ function mountCompressor(root: HTMLElement): void {
   editorButton.className = "button button--secondary";
   editorButton.textContent = "Edit pages";
   editorButton.addEventListener("click", () => {
-    revokeCompressUrl();
     mounted = false;
+    currentController?.abort();
+    revokeCompressUrl();
     void mountEditor(root);
   });
 
@@ -99,13 +100,16 @@ function mountCompressor(root: HTMLElement): void {
         setProgress(progress, "Could not compress this PDF");
       }
     } catch (error) {
+      if (!mounted) return;
       const cancelled = error instanceof DOMException && error.name === "AbortError";
       renderError(result, cancelled ? "Compression cancelled." : "Compression failed.");
       setProgress(progress, cancelled ? "Cancelled" : "Could not compress this PDF");
     } finally {
       currentController = undefined;
-      button.disabled = false;
-      cancelButton.disabled = true;
+      if (mounted) {
+        button.disabled = false;
+        cancelButton.disabled = true;
+      }
     }
   });
 

@@ -1,8 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { Dirent } from "node:fs";
-import { lstat, mkdir, readdir, rm, stat } from "node:fs/promises";
-import { mkdirSync } from "node:fs";
-import { statfs } from "node:fs/promises";
+import { chmodSync, Dirent, lstatSync, mkdirSync } from "node:fs";
+import { chmod, lstat, mkdir, readdir, rm, stat, statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -58,6 +56,7 @@ export interface RetainedOutput {
   createdAt: number;
   expiresAt: number;
   leased: boolean;
+  deleteAfterRelease: boolean;
 }
 
 export type LeaseOutcome = "leased" | "not_found" | "forbidden" | "expired" | "busy";
@@ -68,7 +67,12 @@ export interface JobManagerOptions {
   outputTtlMs?: number;
   jobTimeoutMs?: number;
   now?: () => number;
+  /** Test seam for deterministic transient-cleanup failures. */
+  removeDir?: (dir: string) => Promise<void>;
 }
+
+export const RETAINED_OUTPUT_CAPACITY = "RETAINED_OUTPUT_CAPACITY";
+const TEMP_ROOT_UNSAFE = "TEMP_ROOT_UNSAFE";
 
 function randomHandle(): string {
   return randomBytes(16).toString("hex");
@@ -93,6 +97,42 @@ export function isOwnedByCurrentUser(statUid: number | undefined): boolean {
   }
 }
 
+interface SafeRootStat {
+  isSymbolicLink(): boolean;
+  isDirectory(): boolean;
+  uid: number;
+  mode: number;
+}
+
+function assertSafeTempRoot(rootStat: SafeRootStat): void {
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory() || !isOwnedByCurrentUser(rootStat.uid)) {
+    throw new Error(TEMP_ROOT_UNSAFE);
+  }
+  if (process.platform !== "win32" && (rootStat.mode & 0o777) !== 0o700) {
+    throw new Error(TEMP_ROOT_UNSAFE);
+  }
+}
+
+async function prepareTempRoot(tempRoot: string): Promise<void> {
+  await mkdir(tempRoot, { recursive: true, mode: 0o700 });
+  const rootStat = await lstat(tempRoot);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory() || !isOwnedByCurrentUser(rootStat.uid)) {
+    throw new Error(TEMP_ROOT_UNSAFE);
+  }
+  await chmod(tempRoot, 0o700);
+  assertSafeTempRoot(await lstat(tempRoot));
+}
+
+function prepareTempRootSync(tempRoot: string): void {
+  mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+  const rootStat = lstatSync(tempRoot);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory() || !isOwnedByCurrentUser(rootStat.uid)) {
+    throw new Error(TEMP_ROOT_UNSAFE);
+  }
+  chmodSync(tempRoot, 0o700);
+  assertSafeTempRoot(lstatSync(tempRoot));
+}
+
 /**
  * Owns the app temp root, the single global native-operation slot, retained
  * downloadable outputs, and lifecycle cleanup. Only canonical child
@@ -107,6 +147,8 @@ export class JobManager {
   private nativeInFlight = false;
   private nativeEpoch = 0;
   private readonly retained = new Map<string, RetainedOutput>();
+  private readonly pendingCleanup = new Set<string>();
+  private readonly removeJobDir: (dir: string) => Promise<void>;
   private sweeper: NodeJS.Timeout | undefined;
   private closed = false;
 
@@ -115,11 +157,12 @@ export class JobManager {
     this.outputTtlMs = options.outputTtlMs ?? LIMITS.outputTtlMs;
     this.jobTimeoutMs = options.jobTimeoutMs ?? LIMITS.jobTimeoutMs;
     this.now = options.now ?? Date.now;
+    this.removeJobDir = options.removeDir ?? ((dir) => rm(dir, { recursive: true, force: true }));
   }
 
   static async create(options: JobManagerOptions = {}): Promise<JobManager> {
     const tempRoot = options.tempRoot ?? join(tmpdir(), "pdf-compressor-app");
-    await mkdir(tempRoot, { recursive: true, mode: 0o700 });
+    await prepareTempRoot(tempRoot);
     const manager = new JobManager(tempRoot, options);
     await manager.sweepStartupOrphans();
     manager.startSweeper();
@@ -129,7 +172,7 @@ export class JobManager {
   /** Synchronous construction for embedding in a sync server factory. */
   static createSync(options: JobManagerOptions = {}): JobManager {
     const tempRoot = options.tempRoot ?? join(tmpdir(), "pdf-compressor-app");
-    mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+    prepareTempRootSync(tempRoot);
     const manager = new JobManager(tempRoot, options);
     void manager.sweepStartupOrphans().catch(() => undefined);
     manager.startSweeper();
@@ -181,14 +224,14 @@ export class JobManager {
 
   /** Create a private per-job directory owned by the current user. */
   async newJobDir(prefix: string): Promise<{ id: string; dir: string }> {
-    const id = randomBytes(16).toString("hex");
+    const id = randomHandle();
     const dir = join(this.tempRoot, `${prefix}${id}`);
     await mkdir(dir, { recursive: true, mode: 0o700 });
     return { id, dir };
   }
 
   async removeDir(dir: string): Promise<void> {
-    await rm(dir, { recursive: true, force: true });
+    await this.cleanupDirectory(dir);
   }
 
   /** Sum of bytes in owned canonical child directories (symlinks ignored). */
@@ -234,7 +277,7 @@ export class JobManager {
 
   /**
    * Publish a validated output for session-bound download. Evicts the oldest
-   * retained output beyond the two-output cap.
+   * idle output at the two-output cap; active transfers are never removed.
    */
   async retainOutput(options: {
     sessionId: string;
@@ -246,6 +289,14 @@ export class JobManager {
     if (fileStat.size > LIMITS.maxOutputBytes) {
       throw new Error("OUTPUT_TOO_LARGE");
     }
+    if (this.retained.size >= LIMITS.maxRetainedOutputs) {
+      const oldestIdle = [...this.retained.values()]
+        .filter((candidate) => !candidate.leased)
+        .sort((left, right) => left.createdAt - right.createdAt)[0];
+      if (!oldestIdle) throw new Error(RETAINED_OUTPUT_CAPACITY);
+      await this.deleteRetained(oldestIdle.handle);
+    }
+
     const at = this.now();
     const record: RetainedOutput = {
       handle: randomHandle(),
@@ -256,15 +307,10 @@ export class JobManager {
       pageCount: options.pageCount,
       createdAt: at,
       expiresAt: at + this.outputTtlMs,
-      leased: false
+      leased: false,
+      deleteAfterRelease: false
     };
     this.retained.set(record.handle, record);
-    // Evict oldest beyond the retained-output cap.
-    const ordered = [...this.retained.values()].sort((left, right) => left.createdAt - right.createdAt);
-    while (ordered.length > LIMITS.maxRetainedOutputs) {
-      const oldest = ordered.shift();
-      if (oldest) await this.deleteRetained(oldest.handle);
-    }
     return record;
   }
 
@@ -282,7 +328,11 @@ export class JobManager {
     if (!record) return { outcome: "not_found" };
     if (record.sessionId !== sessionId) return { outcome: "forbidden" };
     if (record.expiresAt <= this.now()) {
-      void this.deleteRetained(handle);
+      if (record.leased) {
+        record.deleteAfterRelease = true;
+        return { outcome: "busy" };
+      }
+      this.deleteRetainedSync(record);
       return { outcome: "expired" };
     }
     if (record.leased) return { outcome: "busy" };
@@ -295,6 +345,9 @@ export class JobManager {
     const record = this.retained.get(handle);
     if (!record || record.sessionId !== sessionId) return false;
     record.leased = false;
+    if (record.deleteAfterRelease || record.expiresAt <= this.now()) {
+      this.deleteRetainedSync(record);
+    }
     return true;
   }
 
@@ -315,9 +368,7 @@ export class JobManager {
   consumeSync(handle: string, sessionId: string): boolean {
     const record = this.retained.get(handle);
     if (!record || record.sessionId !== sessionId) return false;
-    this.retained.delete(handle);
-    const dir = record.jobDir;
-    void rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    this.deleteRetainedSync(record);
     return true;
   }
 
@@ -332,8 +383,14 @@ export class JobManager {
   async sweepExpired(): Promise<void> {
     const at = this.now();
     for (const [handle, record] of this.retained) {
-      if (record.expiresAt <= at) await this.deleteRetained(handle);
+      if (record.expiresAt > at) continue;
+      if (record.leased) {
+        record.deleteAfterRelease = true;
+      } else {
+        await this.deleteRetained(handle);
+      }
     }
+    await this.retryPendingCleanup();
   }
 
   /** Remove only owned canonical child directories; ignore the rest. */
@@ -356,24 +413,50 @@ export class JobManager {
         continue;
       }
       const owned = [...this.retained.values()].some((record) => record.jobDir === full);
-      if (!owned) await rm(full, { recursive: true, force: true }).catch(() => undefined);
+      if (!owned) await this.cleanupDirectory(full);
     }
   }
 
   async shutdown(): Promise<void> {
-    if (this.closed) return;
+    if (this.closed) {
+      await this.retryPendingCleanup();
+      return;
+    }
     this.closed = true;
     if (this.sweeper !== undefined) clearInterval(this.sweeper);
     for (const handle of [...this.retained.keys()]) {
       await this.deleteRetained(handle);
     }
+    await this.retryPendingCleanup();
   }
 
   private async deleteRetained(handle: string): Promise<void> {
     const record = this.retained.get(handle);
     if (!record) return;
     this.retained.delete(handle);
-    await rm(record.jobDir, { recursive: true, force: true }).catch(() => undefined);
+    await this.cleanupDirectory(record.jobDir);
+  }
+
+  private deleteRetainedSync(record: RetainedOutput): void {
+    this.retained.delete(record.handle);
+    this.pendingCleanup.add(record.jobDir);
+    void this.cleanupDirectory(record.jobDir);
+  }
+
+  private async cleanupDirectory(dir: string): Promise<void> {
+    this.pendingCleanup.add(dir);
+    try {
+      await this.removeJobDir(dir);
+      this.pendingCleanup.delete(dir);
+    } catch {
+      // Keep the inaccessible directory in retry state for sweep/shutdown.
+    }
+  }
+
+  private async retryPendingCleanup(): Promise<void> {
+    for (const dir of [...this.pendingCleanup]) {
+      await this.cleanupDirectory(dir);
+    }
   }
 }
 

@@ -199,9 +199,14 @@ describe("editor lazy boundary", () => {
   });
 
   it("keeps production security options without loading the real module", () => {
-    const params = secureDocumentParams(new Uint8Array([1, 2, 3])) as Record<string, unknown>;
+    const data = new Uint8Array([1, 2, 3]);
+    const params = secureDocumentParams(data) as Record<string, unknown>;
+    expect(params["data"]).toBe(data);
     expect(params["isEvalSupported"]).toBe(false);
     expect(params["enableScripting"]).toBe(false);
+    expect(params["disableAutoFetch"]).toBe(true);
+    const previewSource = readFileSync("apps/web/src/editor/pdf-preview.ts", "utf8");
+    expect(previewSource).toContain("pdfJs.getDocument(secureDocumentParams(data))");
   });
 });
 
@@ -232,9 +237,24 @@ describe("editor flow", () => {
     const baseline = calls.length;
     expect(baseline).toBeGreaterThan(0);
 
-    // Rotate first page, move it last, select it, then delete it.
-    thumbCards(editor.element)[0].querySelectorAll<HTMLButtonElement>(".thumb__controls button")[2].click();
+    const firstCard = thumbCards(editor.element)[0];
+    const firstCanvas = firstCard.querySelector("canvas");
+
+    // Selection and rotation update keyed cards without discarding canvases.
+    (firstCard.querySelector('input[type="checkbox"]') as HTMLInputElement).click();
     await tick();
+    expect(thumbCards(editor.element)[0]).toBe(firstCard);
+    expect(thumbCards(editor.element)[0].querySelector("canvas")).toBe(firstCanvas);
+    (firstCard.querySelector('input[type="checkbox"]') as HTMLInputElement).click();
+    await tick();
+
+    firstCard.querySelectorAll<HTMLButtonElement>(".thumb__controls button")[2].click();
+    await tick();
+    expect(thumbCards(editor.element)[0]).toBe(firstCard);
+    expect(thumbCards(editor.element)[0].querySelector("canvas")).toBe(firstCanvas);
+    expect(firstCard.querySelector(".thumb__rotation")?.textContent).toContain("90");
+
+    // Move the rotated page last, then delete it.
     thumbCards(editor.element)[0].querySelectorAll<HTMLButtonElement>(".thumb__controls button")[1].click();
     await tick();
     (thumbCards(editor.element)[2].querySelector('input[type="checkbox"]') as HTMLInputElement).click();
@@ -460,6 +480,32 @@ describe("thumbnail work queue", () => {
     await tick(2);
     expect(cancels).toContain("first");
   });
+
+  it("does not release a cancelled task's slot until its work settles", async () => {
+    const queue = new ThumbnailWorkQueue(1);
+    let finishCancelled!: () => void;
+    const first = queue.schedule("first", () => ({
+      done: new Promise<void>((resolve) => {
+        finishCancelled = resolve;
+      }),
+      cancel: (): void => undefined
+    }));
+    await tick(2);
+
+    let replacementStarted = false;
+    const replacement = queue.schedule("replacement", () => {
+      replacementStarted = true;
+      return { done: Promise.resolve(), cancel: (): void => undefined };
+    });
+    queue.cancel("first");
+    await tick(2);
+
+    expect(replacementStarted).toBe(false);
+    expect(queue.activeCount).toBe(1);
+    finishCancelled();
+    await expect(first).resolves.toBe("cancelled");
+    await expect(replacement).resolves.toBe("done");
+  });
 });
 
 describe("preview store", () => {
@@ -485,9 +531,15 @@ describe("preview store", () => {
     const doc = fakeDocument(2);
     store.registerDocument("gone", doc);
     let renderStarted = false;
+    let finishRender!: () => void;
     const pending = store.scheduleRender("gone:1@0", () => {
       renderStarted = true;
-      return { done: new Promise<void>(() => undefined), cancel: (): void => undefined };
+      return {
+        done: new Promise<void>((resolve) => {
+          finishRender = resolve;
+        }),
+        cancel: (): void => finishRender()
+      };
     });
     void pending;
     await tick(2);
@@ -496,5 +548,33 @@ describe("preview store", () => {
     expect(doc.destroyed).toBe(1);
     expect(store.getDocument("gone")).toBeUndefined();
     await expect(pending).resolves.toBe("cancelled");
+  });
+
+  it("keeps a replacement with the same render key visible to source teardown", async () => {
+    const store = new PreviewStore();
+    const doc = fakeDocument(1);
+    store.registerDocument("same", doc);
+    let finishFirst!: () => void;
+    const first = store.scheduleRender("same:1@0", () => ({
+      done: new Promise<void>((resolve) => {
+        finishFirst = resolve;
+      }),
+      cancel: (): void => finishFirst()
+    }));
+    await tick(2);
+
+    let finishReplacement!: () => void;
+    const replacement = store.scheduleRender("same:1@0", () => ({
+      done: new Promise<void>((resolve) => {
+        finishReplacement = resolve;
+      }),
+      cancel: (): void => finishReplacement()
+    }));
+    await expect(first).resolves.toBe("cancelled");
+    await tick(2);
+
+    await store.removeSource("same");
+    await expect(replacement).resolves.toBe("cancelled");
+    expect(doc.destroyed).toBe(1);
   });
 });

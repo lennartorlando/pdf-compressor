@@ -289,9 +289,12 @@ describe("thumbnail eviction", () => {
 
   it("cancels the pending render of an evicted key", async () => {
     const store = new PreviewStore();
+    let finishRender!: () => void;
     const pending = store.scheduleRender("s:9@0", () => ({
-      done: new Promise<void>(() => undefined),
-      cancel: (): void => undefined
+      done: new Promise<void>((resolve) => {
+        finishRender = resolve;
+      }),
+      cancel: (): void => finishRender()
     }));
     void pending;
     await tick(2);
@@ -339,10 +342,14 @@ describe("thumbnail eviction", () => {
           render: (canvas: HTMLCanvasElement) => {
             canvas.width = 60;
             canvas.height = 80;
-            const spy = vi.fn();
+            let finishRender!: () => void;
+            const done = new Promise<void>((resolve) => {
+              finishRender = resolve;
+            });
+            const spy = vi.fn(() => finishRender());
             renderCancelSpies.push(spy);
             return {
-              done: new Promise<void>(() => undefined),
+              done,
               cancel: (): void => {
                 spy();
               }
@@ -392,6 +399,72 @@ describe("thumbnail eviction", () => {
 /* ----------------------- 3. pre-allocation file limit ----------------------- */
 
 describe("pre-allocation file limit", () => {
+  it("does not open a document when byte reading finishes after editor teardown", async () => {
+    let releaseBytes!: () => void;
+    const bytesReady = new Promise<void>((resolve) => {
+      releaseBytes = resolve;
+    });
+    const openDocument = vi.fn(async () => fakeDocument(1));
+    const loader: PdfPreviewLoader = { openDocument };
+    const file = {
+      name: "late-read.pdf",
+      size: 500,
+      arrayBuffer: async (): Promise<ArrayBuffer> => {
+        await bytesReady;
+        return new Uint8Array(500).buffer;
+      }
+    } as File;
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      ok: true,
+      capabilities: {
+        qpdf: { available: true, version: "12.4.1" },
+        ghostscript: { available: true, version: "10.0.0" }
+      }
+    })));
+    const editor = createPageEditor({ onExit: () => undefined, loader });
+    document.body.append(editor.element);
+
+    const input = editor.element.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick(2);
+    editor.destroy();
+    releaseBytes();
+    await tick(5);
+
+    expect(openDocument).not.toHaveBeenCalled();
+    expect(editor.element.querySelectorAll(".filelist li")).toHaveLength(0);
+  });
+
+  it("destroys a document that finishes opening after editor teardown", async () => {
+    let releaseOpen!: (document: PdfJsDocumentHandle) => void;
+    const opening = new Promise<PdfJsDocumentHandle>((resolve) => {
+      releaseOpen = resolve;
+    });
+    const loader: PdfPreviewLoader = { openDocument: async () => opening };
+    const lateDocument = fakeDocument(1);
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      ok: true,
+      capabilities: {
+        qpdf: { available: true, version: "12.4.1" },
+        ghostscript: { available: true, version: "10.0.0" }
+      }
+    })));
+    const editor = createPageEditor({ onExit: () => undefined, loader });
+    document.body.append(editor.element);
+
+    const input = editor.element.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [makePdfFile("late-open.pdf", 500)], configurable: true });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick(2);
+    editor.destroy();
+    releaseOpen(lateDocument);
+    await tick(5);
+
+    expect(lateDocument.destroyed).toBe(1);
+    expect(editor.element.querySelectorAll(".filelist li")).toHaveLength(0);
+  });
+
   it("rejects an over-limit file without reading its bytes", async () => {
     const fake = createFakeLoader([1]);
     vi.stubGlobal(

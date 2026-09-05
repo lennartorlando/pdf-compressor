@@ -91,15 +91,7 @@ export function createPdfJsLoader(): PdfPreviewLoader {
   return {
     async openDocument(data: Uint8Array): Promise<PdfJsDocumentHandle> {
       const pdfJs = await api();
-      const bytes = new Uint8Array(data.length);
-      bytes.set(data);
-      const params: SecureDocumentParams = {
-        data: bytes,
-        isEvalSupported: false,
-        enableScripting: false,
-        disableAutoFetch: true
-      };
-      const loadingTask = pdfJs.getDocument(params);
+      const loadingTask = pdfJs.getDocument(secureDocumentParams(data));
       const document = await loadingTask.promise;
       return {
         pageCount: document.numPages,
@@ -159,7 +151,8 @@ export function secureDocumentParams(data: Uint8Array): SecureDocumentParams {
   return {
     data,
     isEvalSupported: false,
-    enableScripting: false
+    enableScripting: false,
+    disableAutoFetch: true
   };
 }
 
@@ -167,8 +160,8 @@ export type QueueOutcome = "done" | "cancelled";
 
 /**
  * Bounded FIFO of render tasks with at most `maxConcurrent` in flight.
- * `cancel` drops a queued task or aborts the active one; every scheduled
- * task settles exactly once.
+ * `cancel` drops queued work or signals active work, whose slot remains held
+ * until its `done` promise settles. Every scheduled task settles exactly once.
  */
 export class ThumbnailWorkQueue {
   private running = 0;
@@ -182,7 +175,6 @@ export class ThumbnailWorkQueue {
     string,
     {
       abort: () => void;
-      settle: (outcome: QueueOutcome) => void;
       entry: { cancelled: boolean };
     }
   >();
@@ -218,12 +210,8 @@ export class ThumbnailWorkQueue {
       try {
         running.abort();
       } catch {
-        // Cancellation is best effort; settle still releases the waiter.
+        // Cancellation is best effort; `done` still owns slot release.
       }
-      // A cancelled task may never settle its own promise (e.g. a render
-      // torn down mid-flight), so release the waiter and the slot now. A
-      // late task settlement is ignored by the settle guard.
-      running.settle("cancelled");
     }
   }
 
@@ -232,22 +220,22 @@ export class ThumbnailWorkQueue {
       entry.cancelled = true;
       entry.resolve("cancelled");
     }
-    for (const [key, running] of [...this.active]) {
+    for (const running of [...this.active.values()]) {
       running.entry.cancelled = true;
       try {
         running.abort();
       } catch {
         // Best effort.
       }
-      running.settle("cancelled");
-      void key;
     }
   }
 
   private pump(): void {
     while (this.running < this.maxConcurrent && this.queued.length > 0) {
-      const entry = this.queued.shift();
-      if (!entry || entry.cancelled) continue;
+      const runnableIndex = this.queued.findIndex((entry) => !entry.cancelled && !this.active.has(entry.key));
+      if (runnableIndex < 0) return;
+      const [entry] = this.queued.splice(runnableIndex, 1);
+      if (!entry) continue;
       this.running += 1;
       const record = { cancelled: false };
       let settled = false;
@@ -269,7 +257,6 @@ export class ThumbnailWorkQueue {
       const liveTask = task;
       this.active.set(entry.key, {
         entry: record,
-        settle,
         abort: (): void => {
           record.cancelled = true;
           liveTask.cancel();
@@ -328,13 +315,14 @@ export class PreviewStore {
     }
   }
 
-  private readonly scheduledKeys = new Set<string>();
+  private readonly scheduledKeys = new Map<string, symbol>();
 
   /** Schedule a render while remembering the key for source teardown. */
   scheduleRender(key: string, start: (isCancelled: () => boolean) => CancellableRender): Promise<QueueOutcome> {
-    this.scheduledKeys.add(key);
+    const scheduleId = Symbol(key);
+    this.scheduledKeys.set(key, scheduleId);
     return this.queue.schedule(key, start).finally(() => {
-      this.scheduledKeys.delete(key);
+      if (this.scheduledKeys.get(key) === scheduleId) this.scheduledKeys.delete(key);
     }) as Promise<QueueOutcome>;
   }
 
@@ -345,7 +333,7 @@ export class PreviewStore {
 
   private renderKeysFor(sourceId: string): string[] {
     const prefix = `${sourceId}:`;
-    return [...this.scheduledKeys].filter((key) => key.startsWith(prefix));
+    return [...this.scheduledKeys.keys()].filter((key) => key.startsWith(prefix));
   }
 
   trackMounted(key: string, bytes: number, canvas?: HTMLCanvasElement): string[] {

@@ -44,6 +44,22 @@ export function formatJsonError(error: unknown): string {
   })}\n`;
 }
 
+export function formatJsonUsageError(error: unknown): string {
+  return `${JSON.stringify({
+    ok: false,
+    code: "USAGE",
+    message: error instanceof Error ? error.message : "Invalid arguments"
+  })}\n`;
+}
+
+export function usageErrorResult(error: unknown): CliResult {
+  return {
+    exitCode: exitCodes.usage,
+    stdout: formatJsonUsageError(error),
+    stderr: ""
+  };
+}
+
 export function exitCodeFor(error: unknown): number {
   if (error instanceof PageManifestError) return exitCodes.validationFailure;
   if (!isCompressionError(error)) return exitCodes.compressionFailure;

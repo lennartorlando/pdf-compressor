@@ -1,6 +1,12 @@
 import { resolve } from "node:path";
 import { inspectSources, type PageSourceBinding, type NativeRunner } from "@pdf-compressor/core";
-import { exitCodeFor, formatJsonError, formatJsonSuccess, type CliResult } from "../output.js";
+import {
+  exitCodeFor,
+  formatJsonError,
+  formatJsonSuccess,
+  usageErrorResult,
+  type CliResult
+} from "../output.js";
 
 export interface InspectCommandOptions {
   paths: string[];
@@ -33,6 +39,9 @@ export async function runInspectCommand(args: string[], deps: InspectCommandDeps
   try {
     options = parseInspectArgs(args);
   } catch (error) {
+    if (args.includes("--json")) {
+      return usageErrorResult(error);
+    }
     return {
       exitCode: 64,
       stdout: "",

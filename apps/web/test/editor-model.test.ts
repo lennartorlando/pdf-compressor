@@ -104,6 +104,25 @@ describe("editor model", () => {
     expect(toggled.selection).toEqual([2]);
   });
 
+  it("keeps selection and focus attached to logical pages across moves and deletes", () => {
+    let state = setSelection(stateWithTwoSources(), [0, 2, 4]);
+    state = setFocus(state, 1);
+
+    state = moveEntry(state, 0, 4);
+    expect(state.selection).toEqual([1, 3, 4]);
+    expect(state.focusIndex).toBe(0);
+
+    state = deleteEntries(state, [0, 3]);
+    expect(state.selection).toEqual([0, 2]);
+    expect(state.focusIndex).toBeNull();
+
+    let backward = setSelection(stateWithTwoSources(), [1, 4]);
+    backward = setFocus(backward, 3);
+    backward = moveEntry(backward, 4, 1);
+    expect(backward.selection).toEqual([1, 2]);
+    expect(backward.focusIndex).toBe(4);
+  });
+
   it("rejects invalid selection positions", () => {
     const state = stateWithTwoSources();
     expect(() => setSelection(state, [5])).toThrow(EditorLimitError);
