@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Option B — Page editor pipeline (mock)</title>
+<style>
+:root{color:#18202f;background:#f5f7fb;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}body{margin:0}
+a{color:#1f7a5c}
+.bar{position:sticky;top:0;background:#fff;border-bottom:1px solid #d9deea;padding:10px 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:2}
+.bar strong{font-size:17px}.bar .spacer{flex:1}
+.btn{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;border:0;border-radius:8px;background:#1f7a5c;color:#fff;font-weight:700;font-size:14px;cursor:pointer;text-decoration:none}
+.btn--ghost{background:#dfe5f0;color:#26324a}
+.wrap{max-width:960px;margin:0 auto;padding:20px 16px 40px;display:grid;gap:16px}
+.card{background:#fff;border:1px solid #d9deea;border-radius:10px;padding:16px}
+.step{display:flex;gap:10px;align-items:baseline;margin-bottom:8px}
+.n{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#18202f;color:#fff;font-size:13px;font-weight:700;flex:none}
+h1{font-size:24px;margin:0}h2{font-size:16px;margin:0}
+.muted{color:#4c5870}.small{font-size:13px}
+.drop{border:2px dashed #8792a8;border-radius:8px;min-height:110px;display:grid;place-items:center;text-align:center;padding:18px;background:#fff;margin-top:10px}
+.filelist{margin:10px 0 0;padding:0;list-style:none;display:grid;gap:8px}
+.filelist li{border:1px solid #d9deea;border-radius:8px;padding:8px 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px}
+.filelist li.fail{border-color:#e3b3b3;background:#fdf3f3}
+.tag{font-size:12px;background:#eef1f7;border-radius:20px;padding:2px 10px;color:#4c5870}
+.tag--err{background:#fbe3e3;color:#a23b3b}
+.strip{display:flex;gap:10px;overflow-x:auto;padding:12px 2px;margin-top:8px}
+.frame{flex:0 0 150px;border:1px solid #d9deea;border-radius:8px;padding:8px;display:grid;gap:6px;background:#fff;font-size:13px}
+.frame--sel{outline:2px solid #1f7a5c;outline-offset:1px}
+.frame--rot .mini{transform:rotate(90deg)}
+.mini{background:#eef1f7;border-radius:4px;aspect-ratio:3/4;display:grid;place-items:center}
+.mini span{width:60%;height:72%;background:#fff;border:1px solid #c6cddd;border-radius:2px;display:grid;place-items:center;color:#65708a}
+.frow{display:flex;gap:4px}.frow button{flex:1;border:1px solid #d9deea;background:#f5f7fb;border-radius:6px;min-height:28px;cursor:pointer;font-size:12px}
+.segment{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.segment label{border:1px solid #d9deea;border-radius:8px;padding:10px;font-size:14px;display:flex;gap:8px}
+.profiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:8px}
+.profiles label{border:1px solid #d9deea;border-radius:8px;padding:10px;font-size:14px}
+.warn{border:1px solid #e6cf8f;background:#fdf8e7;border-radius:8px;padding:10px;font-size:13px;color:#5c4a12;margin-top:10px}
+.err{border:1px solid #e3b3b3;background:#fdf3f3;border-radius:8px;padding:10px;font-size:13px;color:#a23b3b;margin-top:10px}
+.exportrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center}
+@media(max-width:640px){.profiles{grid-template-columns:1fr 1fr}.segment{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="bar">
+<a href="#">← Compressor</a><strong>Page editor · B</strong>
+<span class="muted small">Step 2 of 3 — Arrange</span>
+<span class="spacer"></span>
+<button class="btn btn--ghost" type="button">Add PDFs</button>
+<button class="btn" type="button">Export ↓</button>
+</header>
+<div class="wrap">
+<p class="muted small" style="margin:0">Static mock. Same features as A and C, arranged as a top-to-bottom pipeline.</p>
+<section class="card" aria-label="Step 1 add files">
+<div class="step"><span class="n">1</span><h2>Add PDFs</h2></div>
+<div class="drop"><div><strong>Drop PDFs here</strong><br><span class="muted small">or <a href="#">choose files</a> · local only</span></div></div>
+<ul class="filelist">
+<li><strong>contract.pdf</strong> <span class="tag">5 pages</span> <span class="tag">source A · green</span> <button type="button">Remove</button></li>
+<li><strong>appendix.pdf</strong> <span class="tag">4 pages</span> <span class="tag">source B · blue</span> <button type="button">Remove</button></li>
+<li class="fail"><strong>scan-2021.pdf</strong> <span class="tag tag--err">failed — encrypted</span> <span class="small">Nothing was uploaded. Retry with password or remove.</span> <button type="button">Retry</button> <button type="button">Remove</button></li>
+</ul>
+</section>
+<section class="card" aria-label="Step 2 arrange pages">
+<div class="step"><span class="n">2</span><h2>Arrange combined sequence · 9 pages</h2></div>
+<p class="muted small" style="margin:0">Scroll sideways. Check pages to select. Source shown under each page.</p>
+<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+<button type="button">Select all</button><button type="button">Clear</button>
+<button type="button">⟳ Rotate selected</button><button type="button">Delete selected</button>
+<span class="muted small">3 of 9 selected</span>
+</div>
+<div class="strip" role="list">
+<div class="frame frame--sel" role="listitem"><label><input type="checkbox" checked> 1 · contract (A)</label><div class="mini"><span>A1</span></div><div class="frow"><button type="button" aria-label="Move left">←</button><button type="button" aria-label="Move right">→</button><button type="button" aria-label="Rotate">⟳</button><button type="button" aria-label="Delete">✕</button></div></div>
+<div class="frame frame--sel" role="listitem"><label><input type="checkbox" checked> 2 · contract (A)</label><div class="mini"><span>A2</span></div><div class="frow"><button type="button">←</button><button type="button">→</button><button type="button">⟳</button><button type="button">✕</button></div></div>
+<div class="frame" role="listitem"><label><input type="checkbox"> 3 · contract (A)</label><div class="mini"><span>A3</span></div><div class="frow"><button type="button">←</button><button type="button">→</button><button type="button">⟳</button><button type="button">✕</button></div></div>
+<div class="frame frame--sel frame--rot" role="listitem"><label><input type="checkbox" checked> 4 · appendix (B) ↻</label><div class="mini"><span>B1</span></div><div class="frow"><button type="button">←</button><button type="button">→</button><button type="button">⟳</button><button type="button">✕</button></div></div>
+<div class="frame" role="listitem"><label><input type="checkbox"> 5 · appendix (B)</label><div class="mini"><span>B2</span></div><div class="frow"><button type="button">←</button><button type="button">→</button><button type="button">⟳</button><button type="button">✕</button></div></div>
+<div class="frame" role="listitem"><label><input type="checkbox"> 6 · appendix (B)</label><div class="mini"><span>B3</span></div><div class="frow"><button type="button">←</button><button type="button">→</button><button type="button">⟳</button><button type="button">✕</button></div></div>
+<div class="frame" role="listitem"><label><input type="checkbox"> 7 · contract (A)</label><div class="mini"><span>A4</span></div><div class="frow"><button type="button">←</button><button type="button">→</button><button type="button">⟳</button><button type="button">✕</button></div></div>
+<div class="frame" role="listitem"><label><input type="checkbox"> 8 · contract (A)</label><div class="mini"><span>A5</span></div><div class="frow"><button type="button">←</button><button type="button">→</button><button type="button">⟳</button><button type="button">✕</button></div></div>
+<div class="frame" role="listitem"><label><input type="checkbox"> 9 · appendix (B)</label><div class="mini"><span>B4</span></div><div class="frow"><button type="button">←</button><button type="button">→</button><button type="button">⟳</button><button type="button">✕</button></div></div>
+</div>
+<div class="warn" role="note"><strong>Compatibility:</strong> appendix.pdf contains form fields and mixed page sizes. Export keeps sizes, flattens fields.</div>
+<div class="err" role="alert"><strong>Failure state:</strong> scan-2021.pdf skipped (encrypted). Remaining 9 pages unaffected.</div>
+</section>
+<section class="card" aria-label="Step 3 export">
+<div class="step"><span class="n">3</span><h2>Export</h2></div>
+<div class="segment" role="radiogroup" aria-label="Page scope">
+<label><input type="radio" name="scope" checked> All 9 pages</label>
+<label><input type="radio" name="scope"> Selection only (3)</label>
+</div>
+<fieldset style="border:0;padding:0;margin:12px 0 0"><legend><strong>Compression (optional)</strong></legend>
+<div class="profiles">
+<label><input type="radio" name="p" checked> None</label>
+<label><input type="radio" name="p"> Conservative</label>
+<label><input type="radio" name="p"> Balanced</label>
+<label><input type="radio" name="p"> Aggressive</label>
+</div></fieldset>
+<div class="exportrow">
+<button class="btn" type="button">Export PDF</button>
+<button class="btn btn--ghost" type="button">Back to compressor</button>
+<span class="muted small">Local only. No upload.</span>
+</div>
+</section>
+</div>
+</body>
+</html>

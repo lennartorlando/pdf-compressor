@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Option C — Page editor merge board (mock)</title>
+<style>
+:root{color:#18202f;background:#f5f7fb;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}body{margin:0}
+a{color:#1f7a5c}
+.head{padding:14px 20px 0;max-width:1180px;margin:0 auto}
+.head .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.head h1{font-size:22px;margin:6px 0 2px}
+.muted{color:#4c5870}.small{font-size:13px}
+.board{max-width:1180px;margin:0 auto;padding:14px 20px 30px;display:grid;gap:14px}
+.sources{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.panel{background:#fff;border:1px solid #d9deea;border-radius:10px;padding:12px}
+.panel--fail{border-color:#e3b3b3}
+.panel h2{font-size:14px;margin:0 0 4px}
+.minigrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:8px}
+.mthumb{background:#eef1f7;border:1px solid #d9deea;border-radius:6px;aspect-ratio:3/4;display:grid;place-items:center;font-size:12px;color:#65708a}
+.output{background:#fff;border:1px solid #d9deea;border-radius:10px;padding:12px}
+.outhead{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.outhead h2{font-size:14px;margin:0}.outhead .spacer{flex:1}
+.tbtn{border:1px solid #d9deea;background:#f5f7fb;border-radius:8px;min-height:34px;padding:0 12px;font-size:13px;font-weight:600;cursor:pointer}
+.rows{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.rows li{display:grid;grid-template-columns:auto 44px 1fr auto;gap:10px;align-items:center;border:1px solid #d9deea;border-radius:8px;padding:6px 10px;font-size:14px}
+.rows li.sel{outline:2px solid #1f7a5c;outline-offset:1px}
+.grip{color:#8792a8;cursor:grab}
+.rthumb{width:44px;aspect-ratio:3/4;background:#eef1f7;border:1px solid #c6cddd;border-radius:4px;display:grid;place-items:center;font-size:11px;color:#65708a}
+.rthumb.rot{transform:rotate(90deg) scale(.8)}
+.ractions{display:flex;gap:4px;flex-wrap:wrap}
+.ractions button{border:1px solid #d9deea;background:#fff;border-radius:6px;min-height:30px;min-width:34px;cursor:pointer;font-size:12px}
+.foot{display:grid;grid-template-columns:1fr 300px;gap:14px;align-items:start}
+.export{background:#18202f;color:#fff;border-radius:10px;padding:14px}
+.export h2{font-size:14px;margin:0 0 8px;color:#fff}
+.export fieldset{border:0;padding:0;margin:0 0 10px}
+.export legend{font-size:13px;color:#c6cddd;margin-bottom:6px}
+.export label{display:flex;gap:8px;align-items:center;background:#232f47;border-radius:8px;padding:8px;margin-bottom:6px;font-size:14px}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border:0;border-radius:8px;background:#1f7a5c;color:#fff;font-weight:700;font-size:14px;cursor:pointer;width:100%;text-decoration:none}
+.notes{display:grid;gap:8px}
+.warn{border:1px solid #e6cf8f;background:#fdf8e7;border-radius:8px;padding:10px;font-size:13px;color:#5c4a12}
+.err{border:1px solid #e3b3b3;background:#fdf3f3;border-radius:8px;padding:10px;font-size:13px;color:#a23b3b}
+@media(max-width:900px){.sources{grid-template-columns:1fr}.foot{grid-template-columns:1fr}}
+@media(max-width:560px){.rows li{grid-template-columns:auto 44px 1fr}.ractions{grid-column:1/-1}}
+</style>
+</head>
+<body>
+<div class="head">
+<div class="row"><a href="#">← Compressor</a><span class="muted small">Page editor · C — merge board (mock)</span><span style="flex:1"></span><button class="tbtn" type="button">+ Add PDFs</button></div>
+<h1>Combine sources, then order the result</h1>
+<p class="muted small" style="margin:0">Top: where pages come from. Bottom: combined result. Right: export. Static mock.</p>
+</div>
+<div class="board">
+<div class="sources">
+<section class="panel" aria-label="Source A"><h2>Source A · contract.pdf · 5 pages</h2><span class="muted small">Green label · click “Add all” to append</span><div style="margin-top:6px"><button class="tbtn" type="button">Add all 5 ↓</button></div>
+<div class="minigrid"><div class="mthumb">A1</div><div class="mthumb">A2</div><div class="mthumb">A3</div><div class="mthumb">A4</div></div>
+<p class="small muted">+1 more (A5). All pages available below.</p></section>
+<section class="panel" aria-label="Source B"><h2>Source B · appendix.pdf · 4 pages</h2><span class="muted small">Blue label · mixed sizes + form fields</span><div style="margin-top:6px"><button class="tbtn" type="button">Add all 4 ↓</button></div>
+<div class="minigrid"><div class="mthumb">B1</div><div class="mthumb">B2</div><div class="mthumb">B3</div><div class="mthumb">B4</div></div>
+<p class="small muted">Warning: fields flatten on export.</p></section>
+</div>
+<section class="panel panel--fail" aria-label="Failed file"><h2>scan-2021.pdf — could not be added</h2><p class="small" style="margin:4px 0;color:#a23b3b">Encrypted file. Enter password or remove. Other sources unaffected.</p><div><button class="tbtn" type="button">Enter password</button> <button class="tbtn" type="button">Remove</button></div></section>
+<div class="foot">
+<section class="output" aria-label="Combined result">
+<div class="outhead"><h2>Result · 9 pages in order</h2><span class="spacer"></span>
+<button class="tbtn" type="button">Select all</button><button class="tbtn" type="button">⟳ Rotate sel.</button><button class="tbtn" type="button">Delete sel.</button></div>
+<p class="muted small" style="margin:0 0 8px">3 of 9 selected · ↑↓ reorder · ⟳ rotate · ✕ delete</p>
+<ol class="rows">
+<li class="sel"><span class="grip" aria-hidden="true">⋮⋮</span><span class="rthumb">A1</span><span><label><input type="checkbox" checked> <strong>1.</strong> contract p1 · A</label></span><span class="ractions"><button type="button" aria-label="Move up">↑</button><button type="button" aria-label="Move down">↓</button><button type="button" aria-label="Rotate">⟳</button><button type="button" aria-label="Delete">✕</button></span></li>
+<li class="sel"><span class="grip">⋮⋮</span><span class="rthumb">A2</span><span><label><input type="checkbox" checked> <strong>2.</strong> contract p2 · A</label></span><span class="ractions"><button type="button">↑</button><button type="button">↓</button><button type="button">⟳</button><button type="button">✕</button></span></li>
+<li><span class="grip">⋮⋮</span><span class="rthumb">A3</span><span><label><input type="checkbox"> <strong>3.</strong> contract p3 · A</label></span><span class="ractions"><button type="button">↑</button><button type="button">↓</button><button type="button">⟳</button><button type="button">✕</button></span></li>
+<li class="sel"><span class="grip">⋮⋮</span><span class="rthumb rot">B1</span><span><label><input type="checkbox" checked> <strong>4.</strong> appendix p1 · B · 90°</label></span><span class="ractions"><button type="button">↑</button><button type="button">↓</button><button type="button">⟳</button><button type="button">✕</button></span></li>
+<li><span class="grip">⋮⋮</span><span class="rthumb">B2</span><span><label><input type="checkbox"> <strong>5.</strong> appendix p2 · B</label></span><span class="ractions"><button type="button">↑</button><button type="button">↓</button><button type="button">⟳</button><button type="button">✕</button></span></li>
+<li><span class="grip">⋮⋮</span><span class="rthumb">B3</span><span><label><input type="checkbox"> <strong>6.</strong> appendix p3 · B</label></span><span class="ractions"><button type="button">↑</button><button type="button">↓</button><button type="button">⟳</button><button type="button">✕</button></span></li>
+<li><span class="grip">⋮⋮</span><span class="rthumb">A4</span><span><label><input type="checkbox"> <strong>7.</strong> contract p4 · A</label></span><span class="ractions"><button type="button">↑</button><button type="button">↓</button><button type="button">⟳</button><button type="button">✕</button></span></li>
+<li><span class="grip">⋮⋮</span><span class="rthumb">A5</span><span><label><input type="checkbox"> <strong>8.</strong> contract p5 · A</label></span><span class="ractions"><button type="button">↑</button><button type="button">↓</button><button type="button">⟳</button><button type="button">✕</button></span></li>
+<li><span class="grip">⋮⋮</span><span class="rthumb">B4</span><span><label><input type="checkbox"> <strong>9.</strong> appendix p4 · B</label></span><span class="ractions"><button type="button">↑</button><button type="button">↓</button><button type="button">⟳</button><button type="button">✕</button></span></li>
+</ol>
+</section>
+<div style="display:grid;gap:14px">
+<section class="export" aria-label="Export panel">
+<h2>Export</h2>
+<fieldset><legend>Pages</legend>
+<label><input type="radio" name="scope" checked> All 9 pages</label>
+<label><input type="radio" name="scope"> Selection only (3)</label>
+</fieldset>
+<fieldset><legend>Compression (optional)</legend>
+<label><input type="radio" name="prof" checked> None</label>
+<label><input type="radio" name="prof"> Balanced</label>
+<label><input type="radio" name="prof"> Aggressive</label>
+</fieldset>
+<button class="btn" type="button">Export PDF</button>
+<p class="small" style="color:#c6cddd">Local only. <a href="#" style="color:#7fd6b5">Back to simple compressor →</a></p>
+</section>
+<div class="notes">
+<div class="warn" role="note"><strong>Compatibility:</strong> mixed page sizes kept as-is; form fields in appendix.pdf flatten.</div>
+<div class="err" role="alert"><strong>Failure state shown above:</strong> scan-2021.pdf skipped; result still exports.</div>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>
