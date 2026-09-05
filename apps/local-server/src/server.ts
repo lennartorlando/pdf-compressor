@@ -209,8 +209,13 @@ async function handleLaunch(req: IncomingMessage, res: ServerResponse, sessions:
  * A completely flushed HTTP response can emit `finish` before the readable
  * stream's `end`. `finish` is therefore the authoritative successful
  * transfer boundary: it consumes the record synchronously so a trailing
- * `close` cannot release the lease back for a replay. A `close` before
- * `finish`, request abort, or stream error releases the lease for one retry.
+ * `close` cannot release the lease back for a replay. On short
+ * non-keepalive connections the client's `end` can race ahead of the
+ * server's `finish` callback, so `close` may run while
+ * `res.writableFinished` is already true but before `onFinish()` has
+ * executed. A `close` with `writableFinished === true` is the same
+ * successful boundary and consumes synchronously. Any other `close`,
+ * request abort, or stream error releases the lease for one retry.
  */
 export interface DownloadLeaseSink {
   consumeSync(): void;
@@ -221,7 +226,7 @@ export interface DownloadLeaseSink {
 
 export function createDownloadTracker(sink: DownloadLeaseSink): {
   onFinish(): void;
-  onClose(): void;
+  onClose(writableFinished?: boolean): void;
   onAbort(): void;
   onStreamError(): void;
 } {
@@ -241,7 +246,11 @@ export function createDownloadTracker(sink: DownloadLeaseSink): {
   };
   return {
     onFinish: () => succeed(),
-    onClose: () => {
+    onClose: (writableFinished = false) => {
+      if (writableFinished) {
+        succeed();
+        return;
+      }
       if (!finished) fail(() => sink.destroySource());
     },
     onAbort: () => fail(() => sink.destroySource()),
@@ -312,9 +321,11 @@ async function handleDownload(
   });
   // A completed request stream firing `close` on `req` must not cancel the
   // response: only an actually aborted request, a source failure, or a
-  // response that closes before `finish` releases the lease for one retry.
-  // `finish` is the authoritative success boundary and consumes the record
-  // synchronously, so it wins even when it fires before the stream's `end`.
+  // response that closes before `finish` with `writableFinished === false`
+  // releases the lease for one retry. `finish`, or a `close` that observes
+  // `writableFinished === true` before the `finish` callback has run, is the
+  // successful boundary and consumes the record synchronously, so it wins
+  // even when it fires before the stream's `end`.
   req.on("aborted", () => {
     tracker.onAbort();
   });
@@ -325,10 +336,13 @@ async function handleDownload(
     tracker.onFinish();
   });
   res.on("close", () => {
-    // `close` fires after `finish` on a completed response. Any other close
-    // means the transfer did not complete: tear down the source and release
-    // the lease so one retry stays possible.
-    tracker.onClose();
+    // `close` fires after `finish` on a completed response, but on a short
+    // non-keepalive connection it can also fire while `writableFinished` is
+    // already true and before the `finish` callback has run. Treat that
+    // ordering as success so a fully read download cannot be released for
+    // replay. Any other close means the transfer did not complete: tear
+    // down the source and release the lease so one retry stays possible.
+    tracker.onClose(res.writableFinished === true);
   });
   stream.pipe(res);
 }

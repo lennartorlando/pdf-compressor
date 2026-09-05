@@ -131,11 +131,32 @@ describe("job lifecycle", () => {
     expect(forbidden.status).toBe(403);
     expect(JSON.parse(forbidden.body.toString("utf8"))).toMatchObject({ ok: false, code: "HANDLE_FORBIDDEN" });
 
-    // Owning session downloads, then the artifact is consumed.
+    // Owning session downloads, then the artifact is consumed. Repeat the
+    // full export/download/replay cycle on short non-keepalive connections
+    // (agent: false above): the client `end` can race ahead of the server
+    // `finish` callback, and the old U6F tracker settled such a race as a
+    // failure that released the lease, so a replay intermittently returned
+    // 200. Repeating the cycle without sleeps or retries exposes that race
+    // deterministically enough while asserting the fixed boundary each time.
+    for (let round = 0; round < 11; round += 1) {
+      const attempt = await exportOnce(auth, pdf);
+      const first = await call(attempt.downloadUrl, {
+        headers: { origin: auth.origin, cookie: auth.cookie, "x-launch-token": auth.token }
+      });
+      expect(first.status).toBe(200);
+      expect(first.body.length).toBeGreaterThan(0);
+      const replay = await call(attempt.downloadUrl, {
+        headers: { origin: auth.origin, cookie: auth.cookie, "x-launch-token": auth.token }
+      });
+      expect(replay.status).toBe(404);
+    }
+    // Drain the initial export through the same boundary so no retained
+    // output leaks into later tests.
     const first = await call(downloadUrl, {
       headers: { origin: auth.origin, cookie: auth.cookie, "x-launch-token": auth.token }
     });
     expect(first.status).toBe(200);
+    expect(first.body.length).toBeGreaterThan(0);
     const replay = await call(downloadUrl, {
       headers: { origin: auth.origin, cookie: auth.cookie, "x-launch-token": auth.token }
     });

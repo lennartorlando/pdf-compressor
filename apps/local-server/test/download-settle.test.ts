@@ -33,6 +33,29 @@ describe("download transfer boundary (finish-before-end race)", () => {
     expect(sink.calls).toEqual(["consumeSync"]);
   });
 
+  it("close observing writableFinished consumes before the finish callback runs", () => {
+    const sink = recordingSink();
+    const tracker = createDownloadTracker(sink);
+    // Exact U6G race order on a short non-keepalive connection: the server
+    // `close` handler runs while `res.writableFinished === true` but before
+    // the registered `finish` callback has executed.
+    tracker.onClose(true);
+    expect(sink.calls).toEqual(["consumeSync"]);
+    // The late `finish` and any trailing `close` must not double-settle,
+    // so a replay can never lease the consumed record.
+    tracker.onFinish();
+    tracker.onClose(true);
+    tracker.onClose(false);
+    expect(sink.calls).toEqual(["consumeSync"]);
+  });
+
+  it("close with writableFinished false still releases the lease", () => {
+    const sink = recordingSink();
+    const tracker = createDownloadTracker(sink);
+    tracker.onClose(false);
+    expect(sink.calls).toEqual(["destroySource", "release"]);
+  });
+
   it("repeated finish/close events consume exactly once", () => {
     const sink = recordingSink();
     const tracker = createDownloadTracker(sink);
