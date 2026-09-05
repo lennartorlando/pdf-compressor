@@ -1,155 +1,210 @@
-import { createReadStream } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createWriteStream } from "node:fs";
+import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
-import { compressPdf, compressionProfiles, isCompressionError, type CompressionProfileName, type CompressionSummary } from "@pdf-compressor/core";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import {
+  compressPdf,
+  compressionProfiles,
+  CompressionError,
+  type CompressionProfileName,
+  type CompressionSummary
+} from "@pdf-compressor/core";
+import { LIMITS, type JobManager } from "../jobs.js";
+import type { SessionStore } from "../session.js";
+import { writeJson } from "./edit.js";
 
-export interface StoredJob {
-  id: string;
-  dir: string;
-  outputPath: string;
-  summary: CompressionSummary;
+export interface CompressRouteContext {
+  sessions: SessionStore;
+  jobs: JobManager;
+  sessionId: string;
+  /** Release the global native slot once native work settles, before file cleanup. */
+  releaseNative: () => void;
 }
 
-export interface CompressionRouteState {
-  jobs: Map<string, StoredJob>;
+export function toPublicSummary(summary: CompressionSummary): CompressionSummary {
+  return { ...summary, inputPath: "upload.pdf", outputPath: "compressed.pdf" };
 }
 
-export function createCompressionRouteState(): CompressionRouteState {
-  return { jobs: new Map() };
+function sanitizeCompressError(error: unknown): { status: number; code: string } {
+  if (error instanceof CompressionError) {
+    switch (error.code) {
+      case "INPUT_NOT_FOUND":
+      case "INPUT_NOT_PDF":
+      case "INPUT_ENCRYPTED":
+        return { status: 422, code: error.code };
+      case "ENGINE_UNAVAILABLE":
+      case "NATIVE_VERSION_UNSUPPORTED":
+        return { status: 503, code: error.code };
+      case "JOB_CANCELLED":
+        return { status: 499, code: error.code };
+      case "JOB_TIMEOUT":
+        return { status: 504, code: error.code };
+      default:
+        return { status: 500, code: "COMPRESSION_FAILED" };
+    }
+  }
+  if (error instanceof Error && (error.message === "BODY_TOO_LARGE" || error.message === "OUTPUT_TOO_LARGE" || error.message === "UPLOAD_ABORTED")) {
+    if (error.message === "BODY_TOO_LARGE") return { status: 413, code: error.message };
+    if (error.message === "OUTPUT_TOO_LARGE") return { status: 422, code: error.message };
+    return { status: 499, code: error.message };
+  }
+  return { status: 500, code: "COMPRESSION_FAILED" };
 }
 
-export async function compressBufferForRequest(
-  body: Buffer,
-  profile: CompressionProfileName,
-  state: CompressionRouteState,
-  displayName = "input.pdf",
-  signal?: AbortSignal
-): Promise<{ status: number; payload: unknown }> {
-  if (!compressionProfiles[profile]) {
-    return {
-      status: 400,
-      payload: { ok: false, code: "UNSUPPORTED_PROFILE", message: "Unsupported compression profile." }
+/** Stream a raw PDF body to a private file with a byte cap (no file-sized buffer). */
+function streamBodyToFile(req: IncomingMessage, target: string, signal: AbortSignal): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const out = createWriteStream(target, { mode: 0o600 });
+    let bytes = 0;
+    let failed = false;
+    const fail = (error: Error): void => {
+      if (failed) return;
+      failed = true;
+      try {
+        req.unpipe();
+      } catch {
+        // Best effort.
+      }
+      out.destroy();
+      reject(error);
     };
+    req.on("data", (chunk: Buffer) => {
+      const size = chunk.length;
+      bytes += size;
+      if (bytes > LIMITS.maxTotalBytes) {
+        fail(new Error("BODY_TOO_LARGE"));
+        req.destroy();
+        return;
+      }
+      if (!out.write(chunk)) {
+        req.pause();
+        out.once("drain", () => req.resume());
+      }
+    });
+    req.on("end", () => {
+      if (!failed) out.end(() => resolve(bytes));
+    });
+    req.on("aborted", () => fail(new Error("UPLOAD_ABORTED")));
+    req.on("error", () => fail(new Error("UPLOAD_ABORTED")));
+    out.on("error", () => fail(new Error("UPLOAD_ABORTED")));
+    signal.addEventListener("abort", () => fail(new Error("UPLOAD_ABORTED")), { once: true });
+  });
+}
+
+/**
+ * Hardened raw compression route. The caller holds the global native slot
+ * and releases it after this handler settles. Shares the request boundary,
+ * token, streaming cap, cancellation, and lifecycle rules with page export.
+ */
+export async function handleCompressRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  ctx: CompressRouteContext
+): Promise<void> {
+  const { jobs } = ctx;
+  const profileParam = url.searchParams.get("profile") ?? "balanced";
+  if (!(profileParam in compressionProfiles)) {
+    writeJson(res, 400, { ok: false, code: "UNSUPPORTED_PROFILE", message: "Unsupported compression profile." });
+    return;
   }
 
-  const jobId = randomUUID();
-  const jobDir = join(tmpdir(), `pdf-compressor-job-${jobId}`);
-  await mkdir(jobDir, { recursive: true });
-  const inputPath = join(jobDir, "input.pdf");
-  const outputPath = join(jobDir, "output.pdf");
+  const claimed = Number(req.headers["content-length"]);
+  if (Number.isInteger(claimed) && claimed > LIMITS.maxTotalBytes) {
+    writeJson(res, 413, { ok: false, code: "BODY_TOO_LARGE", message: "Body exceeds its byte cap." });
+    return;
+  }
+  const expectedIntake = Number.isInteger(claimed) && claimed > 0 ? claimed : LIMITS.maxTotalBytes;
+
+  const { dir: jobDir } = await jobs.newJobDir("compress-");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), jobs.jobTimeoutMs);
+  timeout.unref?.();
+  const onResClose = (): void => {
+    if (!res.writableEnded) controller.abort();
+  };
+  res.on("close", onResClose);
 
   try {
-    await writeFile(inputPath, body);
-    const summary = await compressPdf({ inputPath, outputPath, profile, signal });
+    const outcome = await runCompressWork(req, url, ctx, jobDir, controller);
+    if (outcome.retainedDir === null) {
+      await rm(jobDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+    writeJson(res, outcome.status, outcome.payload);
+  } finally {
+    clearTimeout(timeout);
+    res.off("close", onResClose);
+  }
+}
+
+interface CompressOutcome {
+  status: number;
+  payload: unknown;
+  retainedDir: string | null;
+}
+
+async function runCompressWork(
+  req: IncomingMessage,
+  url: URL,
+  ctx: CompressRouteContext,
+  jobDir: string,
+  controller: AbortController
+): Promise<CompressOutcome> {
+  const { jobs } = ctx;
+  const fail = (status: number, code: string, message: string): CompressOutcome => ({
+    status,
+    payload: { ok: false, code, message },
+    retainedDir: null
+  });
+  const claimed = Number(req.headers["content-length"]);
+  const expectedIntake = Number.isInteger(claimed) && claimed > 0 ? claimed : LIMITS.maxTotalBytes;
+  try {
+    const intake = await jobs.checkCapacity(expectedIntake);
+    if (!intake.ok) {
+      return fail(507, intake.code, "Insufficient temporary capacity.");
+    }
+    const inputPath = join(jobDir, "input.pdf");
+    const outputPath = join(jobDir, "output.pdf");
+    await streamBodyToFile(req, inputPath, controller.signal);
+    // Native work is done after this point; release before any file cleanup.
+    const profileParam = url.searchParams.get("profile") ?? "balanced";
+    const profile = profileParam as CompressionProfileName;
+    const summary = await compressPdf({ inputPath, outputPath, profile, signal: controller.signal });
+    ctx.releaseNative();
+    const outputStat = await stat(outputPath);
+    if (outputStat.size > LIMITS.maxOutputBytes) {
+      throw new Error("OUTPUT_TOO_LARGE");
+    }
     await rm(inputPath, { force: true });
-    state.jobs.set(jobId, { id: jobId, dir: jobDir, outputPath, summary });
+    const retained = await jobs.retainOutput({
+      sessionId: ctx.sessionId,
+      jobDir,
+      outputPath,
+      pageCount: 0
+    });
     return {
       status: 200,
       payload: {
         ok: true,
-        jobId,
-        downloadUrl: `/api/jobs/${jobId}/download`,
-        summary: toPublicSummary(summary, displayName)
-      }
+        handle: retained.handle,
+        downloadUrl: `/api/outputs/${retained.handle}/download`,
+        summary: toPublicSummary(summary)
+      },
+      retainedDir: jobDir
     };
   } catch (error) {
-    await rm(jobDir, { recursive: true, force: true });
-    if (isCompressionError(error)) {
-      return {
-        status: 422,
-        payload: { ok: false, code: error.code, message: error.message }
-      };
-    }
-    return {
-      status: 500,
-      payload: { ok: false, code: "UNKNOWN", message: "Compression failed." }
-    };
+    ctx.releaseNative();
+    const mapped = sanitizeCompressError(error);
+    const message =
+      mapped.code === "UPLOAD_ABORTED"
+        ? "Upload was interrupted."
+        : mapped.status === 499
+          ? "Compression was cancelled."
+          : mapped.status === 504
+            ? "Compression exceeded its runtime budget."
+            : mapped.status >= 500
+              ? "Compression failed."
+              : "Compression was rejected.";
+    return fail(mapped.status, mapped.code, message);
   }
-}
-
-export async function handleCompressionRequest(req: IncomingMessage, res: ServerResponse, state: CompressionRouteState): Promise<void> {
-  const url = new URL(req.url ?? "/", "http://127.0.0.1");
-
-  if (req.method === "POST" && url.pathname === "/api/compress") {
-    const profile = (url.searchParams.get("profile") ?? "balanced") as CompressionProfileName;
-    const body = await readRequestBody(req);
-    const controller = new AbortController();
-    req.on("aborted", () => controller.abort());
-    const displayName = Array.isArray(req.headers["x-filename"])
-      ? req.headers["x-filename"][0]
-      : req.headers["x-filename"];
-    const result = await compressBufferForRequest(body, profile, state, displayName ?? "input.pdf", controller.signal);
-    writeJson(res, result.status, result.payload);
-    return;
-  }
-
-  const downloadMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/download$/);
-  if (req.method === "GET" && downloadMatch) {
-    const job = state.jobs.get(downloadMatch[1]);
-    if (!job) {
-      writeJson(res, 404, { ok: false, code: "JOB_NOT_FOUND", message: "Job was not found or has expired." });
-      return;
-    }
-
-    res.writeHead(200, {
-      "content-type": "application/pdf",
-      "content-disposition": "attachment; filename=\"compressed.pdf\""
-    });
-    const stream = createReadStream(job.outputPath);
-    stream.pipe(res);
-    stream.on("close", () => {
-      state.jobs.delete(job.id);
-      void rm(job.dir, { recursive: true, force: true });
-    });
-    return;
-  }
-
-  const deleteMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/);
-  if (req.method === "DELETE" && deleteMatch) {
-    const job = state.jobs.get(deleteMatch[1]);
-    if (job) {
-      state.jobs.delete(job.id);
-      await rm(job.dir, { recursive: true, force: true });
-    }
-    writeJson(res, 200, { ok: true });
-    return;
-  }
-
-  writeJson(res, 404, { ok: false, code: "NOT_FOUND", message: "Route not found." });
-}
-
-export function createCompressionHttpServer(state = createCompressionRouteState()) {
-  return createServer((req, res) => {
-    handleCompressionRequest(req, res, state).catch((error) => {
-      writeJson(res, 500, { ok: false, code: "UNKNOWN", message: error instanceof Error ? error.message : "Unknown error" });
-    });
-  });
-}
-
-export function toPublicSummary(summary: CompressionSummary, displayName: string): CompressionSummary {
-  return {
-    ...summary,
-    inputPath: displayName,
-    outputPath: "compressed.pdf"
-  };
-}
-
-function writeJson(res: ServerResponse, status: number, payload: unknown): void {
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(JSON.stringify(payload));
-}
-
-async function readRequestBody(req: IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
-}
-
-export async function readFixture(name: string): Promise<Buffer> {
-  return readFile(join(process.cwd(), "tests", "fixtures", name));
 }

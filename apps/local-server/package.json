@@ -10,6 +10,7 @@
     "test": "vitest run apps/local-server/test"
   },
   "dependencies": {
+    "@fastify/busboy": "3.2.2",
     "@pdf-compressor/core": "file:../../packages/core"
   }
 }
