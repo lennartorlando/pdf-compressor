@@ -17,8 +17,6 @@ export interface CompressRouteContext {
   sessions: SessionStore;
   jobs: JobManager;
   sessionId: string;
-  /** Release the global native slot once native work settles, before file cleanup. */
-  releaseNative: () => void;
 }
 
 export function toPublicSummary(summary: CompressionSummary): CompressionSummary {
@@ -93,7 +91,8 @@ function streamBodyToFile(req: IncomingMessage, target: string, signal: AbortSig
 
 /**
  * Hardened raw compression route. The caller holds the global native slot
- * and releases it after this handler settles. Shares the request boundary,
+ * and releases it after this handler settles; this handler never releases
+ * the slot itself. Shares the request boundary,
  * token, streaming cap, cancellation, and lifecycle rules with page export.
  */
 export async function handleCompressRequest(
@@ -170,7 +169,6 @@ async function runCompressWork(
     const profileParam = url.searchParams.get("profile") ?? "balanced";
     const profile = profileParam as CompressionProfileName;
     const summary = await compressPdf({ inputPath, outputPath, profile, signal: controller.signal });
-    ctx.releaseNative();
     const outputStat = await stat(outputPath);
     if (outputStat.size > LIMITS.maxOutputBytes) {
       throw new Error("OUTPUT_TOO_LARGE");
@@ -193,7 +191,6 @@ async function runCompressWork(
       retainedDir: jobDir
     };
   } catch (error) {
-    ctx.releaseNative();
     const mapped = sanitizeCompressError(error);
     const message =
       mapped.code === "UPLOAD_ABORTED"

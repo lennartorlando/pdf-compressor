@@ -39,6 +39,7 @@ export interface StreamedUpload {
   /** Server-generated private paths, one per source part, in arrival order. */
   sourcePaths: string[];
   sourceBytes: number[];
+  /** Aggregate of manifest field bytes plus all source bytes. */
   totalBytes: number;
 }
 
@@ -156,6 +157,13 @@ export function streamExportMultipart(
         fail(new MultipartError("MANIFEST_TOO_LARGE", "Manifest exceeds its byte cap.", 413));
         return;
       }
+      // The aggregate cap covers manifest field bytes as well as source
+      // bytes; the manifest stays a bounded field, never a file buffer.
+      totalBytes += Buffer.byteLength(value, "utf8");
+      if (totalBytes > LIMITS.maxTotalBytes) {
+        fail(new MultipartError("TOTAL_TOO_LARGE", "Upload exceeds its total byte cap.", 413));
+        return;
+      }
       manifestRaw = value;
     }) as (...args: never[]) => void);
 
@@ -243,6 +251,10 @@ export function streamExportMultipart(
         });
       });
       pendingWrites.push(writeDone);
+      // Observe teardown rejections even when the parser never reaches
+      // `finish` after an unpipe, so a capped upload cannot surface an
+      // unhandled rejection. The `finish` handler still settles the outcome.
+      writeDone.catch(() => undefined);
     }) as (...args: never[]) => void);
 
     busboy.on("partsLimit", (() => {

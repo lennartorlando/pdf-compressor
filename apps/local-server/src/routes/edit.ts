@@ -3,9 +3,13 @@ import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   assemblePages,
+  compareVersionTuples,
   CompressionError,
   getGhostscriptVersion,
   getQpdfVersion,
+  GHOSTSCRIPT_SECURITY_FLOOR,
+  parseVersionTuple,
+  QPDF_SECURITY_FLOOR,
   type CompressionProfileName
 } from "@pdf-compressor/core";
 import { parsePageManifest } from "@pdf-compressor/core/page-manifest";
@@ -22,8 +26,6 @@ export interface EditRouteContext {
   sessions: SessionStore;
   jobs: JobManager;
   sessionId: string;
-  /** Release the global native slot once native work settles, before file cleanup. */
-  releaseNative: () => void;
 }
 
 export interface CapabilityStatus {
@@ -37,15 +39,40 @@ export interface Capabilities {
 }
 
 /** qpdf and Ghostscript capabilities are probed independently. */
-export async function getCapabilities(): Promise<Capabilities> {
-  const [qpdf, ghostscript] = await Promise.all([probe("qpdf"), probe("gs")]);
+export async function getCapabilities(deps: CapabilityDeps = {}): Promise<Capabilities> {
+  const [qpdf, ghostscript] = await Promise.all([
+    probe("qpdf", deps.getQpdfVersion),
+    probe("gs", deps.getGhostscriptVersion)
+  ]);
   return { qpdf, ghostscript };
 }
 
-async function probe(command: "qpdf" | "gs"): Promise<CapabilityStatus> {
+export interface CapabilityDeps {
+  getQpdfVersion?: () => Promise<string>;
+  getGhostscriptVersion?: () => Promise<string>;
+}
+
+/** A readable version below the shared core floor reports unavailable. */
+export function meetsNativeFloor(version: string, floor: string): boolean {
+  const found = parseVersionTuple(version);
+  const required = parseVersionTuple(floor);
+  if (!found || !required) return false;
+  return compareVersionTuples(found, required) >= 0;
+}
+
+async function probe(
+  command: "qpdf" | "gs",
+  getVersion?: () => Promise<string>
+): Promise<CapabilityStatus> {
   try {
-    const version = command === "qpdf" ? await getQpdfVersion() : await getGhostscriptVersion();
-    return { available: true, version };
+    const version =
+      getVersion !== undefined
+        ? await getVersion()
+        : command === "qpdf"
+          ? await getQpdfVersion()
+          : await getGhostscriptVersion();
+    const floor = command === "qpdf" ? QPDF_SECURITY_FLOOR : GHOSTSCRIPT_SECURITY_FLOOR;
+    return { available: meetsNativeFloor(version, floor), version };
   } catch {
     return { available: false, version: null };
   }
@@ -103,6 +130,8 @@ function compressionFromUrl(url: URL): CompressionProfileName | null {
  * Bounded multipart page export. The caller holds the global native slot
  * and releases it after this handler settles. All non-final artifacts are
  * removed on every terminal state; only the validated output is retained.
+ * This handler never releases the native slot itself: dispatch is the
+ * single owner and releases exactly once per acquisition.
  */
 export async function handlePageExport(
   req: IncomingMessage,
@@ -283,10 +312,6 @@ async function runExportWork(
             ? "Export failed."
             : "Export was rejected.";
     return fail(mapped.status, mapped.code, message);
-  } finally {
-    // Release the native slot before terminal file cleanup so the next
-    // request never waits on filesystem deletion.
-    ctx.releaseNative();
   }
 }
 

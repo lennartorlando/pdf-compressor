@@ -85,7 +85,8 @@ async function dispatch(
   const authenticated = sessionId as string;
 
   if (req.method === "POST" && url.pathname === "/api/compress") {
-    if (!jobs.tryAcquireNative()) {
+    const slot = jobs.acquireNativeSlot();
+    if (!slot) {
       writeJson(res, 429, { ok: false, code: "NATIVE_BUSY", message: "Another native operation is in flight." });
       return;
     }
@@ -93,17 +94,17 @@ async function dispatch(
       await handleCompressRequest(req, res, url, {
         sessions,
         jobs,
-        sessionId: authenticated,
-        releaseNative: () => jobs.releaseNative()
+        sessionId: authenticated
       });
     } finally {
-      jobs.releaseNative();
+      slot.release();
     }
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/pages/export") {
-    if (!jobs.tryAcquireNative()) {
+    const slot = jobs.acquireNativeSlot();
+    if (!slot) {
       writeJson(res, 429, { ok: false, code: "NATIVE_BUSY", message: "Another native operation is in flight." });
       return;
     }
@@ -111,11 +112,10 @@ async function dispatch(
       await handlePageExport(req, res, url, {
         sessions,
         jobs,
-        sessionId: authenticated,
-        releaseNative: () => jobs.releaseNative()
+        sessionId: authenticated
       });
     } finally {
-      jobs.releaseNative();
+      slot.release();
     }
     return;
   }
@@ -239,7 +239,10 @@ async function handleDownload(
     "cache-control": "no-store"
   });
   const stream = createReadStream(record.outputPath);
-  req.on("close", () => {
+  // A completed request stream firing `close` on `req` must not cancel the
+  // response: only an actually aborted request, a source failure, or a
+  // response that closes before `finish` releases the lease for one retry.
+  req.on("aborted", () => {
     stream.destroy();
     settle(false);
   });
@@ -255,9 +258,14 @@ async function handleDownload(
     sourceDone = true;
   });
   res.on("close", () => {
-    // `close` fires after `finish` on a completed response.
+    // `close` fires after `finish` on a completed response. Any other close
+    // means the transfer did not complete: tear down the source and release
+    // the lease so one retry stays possible.
     if (sourceDone && responseDone) settle(true);
-    else settle(false);
+    else {
+      stream.destroy();
+      settle(false);
+    }
   });
   res.on("finish", () => {
     responseDone = true;

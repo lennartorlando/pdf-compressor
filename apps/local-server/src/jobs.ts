@@ -75,6 +75,25 @@ function randomHandle(): string {
 }
 
 /**
+ * Startup-sweep ownership predicate. On platforms exposing
+ * `process.getuid`, a temp-root child is only eligible for recursive
+ * deletion when its owner matches the current user; foreign-owned
+ * directories are ignored. Where ownership is unavailable (or the uid is
+ * not a number), every canonical candidate stays eligible so behavior on
+ * those platforms is unchanged.
+ */
+export function isOwnedByCurrentUser(statUid: number | undefined): boolean {
+  const getuid = (process as unknown as { getuid?: () => number }).getuid;
+  if (typeof getuid !== "function") return true;
+  if (typeof statUid !== "number") return false;
+  try {
+    return statUid === getuid();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Owns the app temp root, the single global native-operation slot, retained
  * downloadable outputs, and lifecycle cleanup. Only canonical child
  * directories created by this manager are ever swept; symlinks and foreign
@@ -86,6 +105,7 @@ export class JobManager {
   readonly jobTimeoutMs: number;
   private readonly now: () => number;
   private nativeInFlight = false;
+  private nativeEpoch = 0;
   private readonly retained = new Map<string, RetainedOutput>();
   private sweeper: NodeJS.Timeout | undefined;
   private closed = false;
@@ -127,7 +147,28 @@ export class JobManager {
   tryAcquireNative(): boolean {
     if (this.nativeInFlight) return false;
     this.nativeInFlight = true;
+    this.nativeEpoch += 1;
     return true;
+  }
+
+  /**
+   * Single-owner acquisition for request dispatch. The returned guard
+   * releases exactly once and only while its own acquisition is still the
+   * active holder: a stale guard from a completed request can never clear
+   * a slot acquired later by another request. Dispatch owns the guard;
+   * route handlers must never release the slot themselves.
+   */
+  acquireNativeSlot(): { release(): void } | null {
+    if (!this.tryAcquireNative()) return null;
+    const epoch = this.nativeEpoch;
+    let released = false;
+    return {
+      release: (): void => {
+        if (released) return;
+        released = true;
+        if (this.nativeEpoch === epoch) this.nativeInFlight = false;
+      }
+    };
   }
 
   releaseNative(): void {
@@ -295,6 +336,7 @@ export class JobManager {
       try {
         const fileStat = await lstat(full);
         if (!fileStat.isDirectory() || fileStat.isSymbolicLink()) continue;
+        if (!isOwnedByCurrentUser(fileStat.uid)) continue;
       } catch {
         continue;
       }
