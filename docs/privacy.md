@@ -11,14 +11,16 @@ PDF Compressor is local-first.
 
 ## Temporary Files
 
-Compression jobs use isolated temporary directories.
+Compression and page-export jobs use isolated temporary directories.
 
-- The local server writes a temporary input file for the active job.
+- The local server streams each uploaded source once into a private
+  per-job workspace and never buffers complete multipart uploads in memory.
 - The shared core creates its own per-job workspace for intermediate output.
-- Source input files written by the local server are removed after compression.
-- Cancelled and failed jobs remove their temporary workspace.
-
-The current implementation keeps compressed output in a local temporary job directory until the browser downloads it or the job is explicitly deleted. A follow-up should add automatic expiry for stale downloaded results.
+- Source input files written by the local server are removed after every
+  terminal state; only the validated output is retained.
+- A session-bound output survives interrupted downloads for one retry but
+  is consumed after the first completed download, explicit discard, or a
+  short TTL (10 minutes). Cancelled and failed jobs remove their workspace.
 
 ## What Is Not Collected
 
@@ -29,6 +31,11 @@ The current implementation keeps compressed output in a local temporary job dire
 
 ## Known Limits
 
-- Native compression tools such as `qpdf` or Ghostscript must be installed on the user's machine until binary distribution is decided.
-- Password-protected PDFs are rejected rather than decrypted or re-encrypted.
+- Native PDF tools such as `qpdf` (>= 12.4.1, required for page export)
+  or Ghostscript (>= 10.07.1, optional for compression) must be installed
+  on the user's machine until binary distribution is decided.
+- Password-protected, signed, and active-content PDFs are rejected rather
+  than decrypted, repaired, or sanitized.
+- Page assembly may not preserve forms, bookmarks, tags, or custom page
+  labels; these surface as compatibility warnings.
 - Desktop packaging is deferred.

@@ -1,6 +1,8 @@
-# PDF Compressor
+# PDF Compressor & Page Editor
 
-PDF Compressor ist eine lokale, quelloffene Anwendung zum Verkleinern von PDF-Dateien. Dokumente bleiben auf dem eigenen Rechner; Weboberfläche und CLI verwenden dieselbe Kompressionslogik.
+PDF Compressor ist eine lokale, quelloffene Anwendung zum Verkleinern und
+seiteweisen Bearbeiten von PDF-Dateien. Dokumente bleiben auf dem eigenen
+Rechner; Weboberfläche und CLI verwenden dieselbe Core-Logik.
 
 ## Status
 
@@ -12,13 +14,20 @@ Die erste vollständige Version ist implementiert. Das Repository enthält:
 - drei Profile: `conservative`, `balanced` und `aggressive`,
 - strukturierte JSON-Ausgabe für maschinelle Verbraucher.
 
-PDF Compressor ist bewusst kein PDF-Editor. Der aktuelle Umfang beschränkt sich auf Kompression.
+PDF Compressor ist kein reiner Kompressor mehr: Die App kann lokale PDFs
+als Thumbnails vorschauen, Seiten umsortieren, rotieren, löschen,
+mehrere Quellen mischen und eine Auswahl als neues PDF exportieren.
+Die Bearbeitung bleibt auf Seitenebene; Inhalte (Text, Bilder,
+Formulare) werden nicht verändert. Details stehen in
+[`docs/architecture/page-editing.md`](docs/architecture/page-editing.md).
 
 ## Voraussetzungen
 
 - Node.js und npm
-- [`qpdf`](https://qpdf.sourceforge.io/)
-- [Ghostscript](https://www.ghostscript.com/)
+- [`qpdf`](https://qpdf.sourceforge.io/) >= 12.4.1 (Pflicht für
+  Seitenexport; darunter bricht die App geschlossen ab)
+- [Ghostscript](https://www.ghostscript.com/) >= 10.07.1 (optional, nur
+  für Kompressionsprofile nach dem Export)
 
 Auf macOS lassen sich die nativen Werkzeuge mit Homebrew installieren:
 
@@ -59,14 +68,33 @@ node packages/cli/dist/index.js compress input.pdf \
 
 Eine vorhandene Ausgabedatei wird nur mit `--overwrite` ersetzt.
 
+Seiten prüfen und zusammensetzen (gleiche Core-Logik wie die Web-App):
+
+```bash
+node packages/cli/dist/index.js inspect a.pdf b.pdf --json
+node packages/cli/dist/index.js assemble \
+  --source a=a.pdf --source b=b.pdf \
+  --manifest manifest.json --output out.pdf --json
+```
+
+Verschlüsselte, signierte oder aktiv-inhaltliche PDFs (JavaScript,
+Launch-/Open-Actions, eingebettete Dateien u. a.) werden geschlossen
+abgewiesen. Formulare, Lesezeichen, Tags und Seitenlabels überleben den
+Export ggf. nicht; die App meldet sie als Kompatibilitätswarnung.
+Exporte erzeugen immer eine neue Datei, sind einmalig herunterladbar und
+werden nach Download, Verwerfen oder Ablauf (10 Minuten) gelöscht.
+
 ## Repository-Struktur
 
 ```text
-apps/web/          Browseroberfläche
-apps/local-server/ Lokaler Server und Kompressionsroute
-packages/core/     Validierung, Profile und native Kompression
-packages/cli/      Kommandozeilenoberfläche
+apps/web/          Browseroberfläche (Kompressor + Seiteneditor)
+apps/local-server/ Lokaler Server, Kompressions- und Seitenexportrouten
+packages/core/     Validierung, Profile, native Kompression und Seitenmontage
+packages/cli/      Kommandozeilenoberfläche (compress, inspect, assemble)
 tests/fixtures/    Testdateien
+tests/integration/ E2E-Nachweis über Core, CLI und Server (reales qpdf)
+tests/performance/ Deterministische Benchmark-Korpora (20/100/500 Seiten)
+scripts/           Bundle-Budget, Native-Versionstor, Benchmark-Harness
 docs/              Architektur-, Sicherheits- und Datenschutzdokumentation
 ```
 
@@ -74,8 +102,12 @@ docs/              Architektur-, Sicherheits- und Datenschutzdokumentation
 
 ```bash
 npm test
+npm run test:integration
 npm run typecheck
 npm run build
+npm run check:editor-bundle
+npm run check:native-versions
+npm run benchmark:page-editor
 ```
 
 Weitere Details stehen in [`docs/privacy.md`](docs/privacy.md), [`docs/security.md`](docs/security.md) und [`docs/architecture`](docs/architecture).

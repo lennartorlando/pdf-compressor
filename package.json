@@ -13,8 +13,13 @@
     "dev": "npm run dev -w @pdf-compressor/local-server",
     "lint": "npm run typecheck",
     "test": "vitest run",
+    "test:integration": "vitest run tests/integration",
     "test:watch": "vitest",
-    "typecheck": "tsc -b tsconfig.build.json"
+    "typecheck": "tsc -b tsconfig.build.json",
+    "check:editor-bundle": "node scripts/check-editor-bundle.mjs",
+    "check:native-versions": "node scripts/check-native-versions.mjs",
+    "benchmark:page-editor": "node scripts/benchmark-page-editor.mjs",
+    "verify": "npm run typecheck && npm test && npm run test:integration && npm run build && npm run check:editor-bundle && npm run check:native-versions"
   },
   "devDependencies": {
     "@types/node": "^22.13.14",

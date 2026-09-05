@@ -2,23 +2,42 @@
 
 ## Local Trust Boundary
 
-The local server is designed to bind to `127.0.0.1` by default. It is not intended to be exposed as a LAN or internet service.
+The local server binds to `127.0.0.1` by default. It is not intended to be exposed as a LAN or internet service.
+
+Every API route enforces the literal loopback boundary and request
+context (Host, Origin, fetch metadata) before body consumption. Every
+route except token issuance requires a short-lived launch token bound to
+its browser session; download handles are session-bound, leased to one
+transfer, and consumed after the first completed download.
 
 ## File Handling
 
-- The original input path is never overwritten.
-- Temporary job directories are isolated per job.
-- Validation rejects non-PDF files and PDFs with an encryption marker.
-- Compression errors return local error codes rather than partial success.
+- The original input path is never overwritten; export always creates a
+  new PDF and source hashes stay unchanged across all terminal states.
+- Temporary job directories are isolated per job with fixed caps on
+  uploads, outputs, pages, runtime, retained artifacts, and aggregate
+  storage.
+- Validation rejects non-PDF files, encrypted PDFs, signed PDFs, and
+  active content (JavaScript, open/additional/launch actions,
+  submit/import, rich media, embedded files) before any mutation.
+- Compression and page-export errors return local error codes rather than
+  partial success; no partial output is downloadable.
 
 ## External Tools
 
-The shared core can call local PDF tools through adapter modules.
+The shared core calls local PDF tools through adapter modules with
+argument arrays (no shell), closed stdin, a minimal environment, and
+process-group termination.
 
-- `qpdf` is used for lossless structural optimization.
-- Ghostscript is used for lossy image-oriented profiles.
+- `qpdf` (>= 12.4.1, required) performs inspection and the single
+  page-selection assembly mutation per export.
+- Ghostscript (>= 10.07.1, optional) creates post-assembly compression
+  candidates that only win when smaller and valid.
 
-The app treats missing tools as a local setup problem. It does not fall back to a remote compressor.
+Versions below either floor fail closed. Native parsing still runs with
+the user account's filesystem authority unless packaging adds OS
+isolation; upstream parser/resource-exhaustion fixes are pending a later
+release.
 
 ## Reporting Vulnerabilities
 

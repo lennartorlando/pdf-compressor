@@ -1,6 +1,9 @@
-# Compression Engine
+# Compression and Page Engine
 
-The compression engine lives in `packages/core` and is consumed by both the local web server and the CLI.
+The engine lives in `packages/core` and is consumed by the local web
+server and the CLI for both compression and page-level editing. Page
+assembly is documented in detail in
+[`page-editing.md`](page-editing.md).
 
 ## Pipeline
 
@@ -26,3 +29,5 @@ Adapters hide the native tool details from the product surfaces.
 - `ghostscript` adapter: image-oriented lossy compression through `pdfwrite`.
 
 The default local machine may not have either tool installed. In that case, the app reports `ENGINE_UNAVAILABLE` and stays local.
+Missing qpdf disables page export; missing Ghostscript disables only
+compression profiles.

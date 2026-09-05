@@ -7,15 +7,30 @@ on:
       - main
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  verify:
+    # macOS + Homebrew tracks current qpdf/Ghostscript releases, which is
+    # what can satisfy the qpdf security floor (12.4.1). Ubuntu apt lags
+    # below the floor, so it is not used for the native lane. If a tool
+    # ever drops below its floor, `check:native-versions` fails the lane
+    # clearly instead of silently lowering the floor. Ghostscript stays
+    # capability-dependent at runtime: missing gs only disables compression.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      - name: Install native tools
+        run: |
+          brew install qpdf ghostscript
+          qpdf --version
+          gs --version || true
       - run: npm ci
+      - run: npm run check:native-versions
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:integration
       - run: npm run build
+      - run: npm run check:editor-bundle
+      - run: npm run benchmark:page-editor
