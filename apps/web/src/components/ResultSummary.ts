@@ -9,7 +9,12 @@ export function createResultSummary(): HTMLElement {
   return section;
 }
 
-export function renderResult(target: HTMLElement, summary: CompressionSummary, downloadUrl: string): void {
+export function renderResult(
+  target: HTMLElement,
+  summary: CompressionSummary,
+  href: string,
+  fileName = "compressed.pdf"
+): void {
   target.innerHTML = `
     <h2>${summary.outputSmaller ? "Compressed PDF ready" : "No useful reduction"}</h2>
     <dl>
@@ -18,7 +23,7 @@ export function renderResult(target: HTMLElement, summary: CompressionSummary, d
       <div><dt>Reduction</dt><dd>${summary.reductionPercent}%</dd></div>
       <div><dt>Profile</dt><dd>${summary.profile}</dd></div>
     </dl>
-    <a class="button" href="${downloadUrl}" download>Download PDF</a>
+    <a class="button" href="${href}" download="${fileName}">Download PDF</a>
   `;
 }
 

@@ -1,11 +1,11 @@
 import {
-  discardOutput,
   downloadOutput,
   exportPages,
   getCapabilities,
   type Capabilities,
   type ExportCompression
 } from "../api/client.js";
+import { QPDF_SECURITY_FLOOR } from "@pdf-compressor/core/native-floors";
 import {
   addSource,
   checkSourceCapacity,
@@ -65,13 +65,17 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
   let exportController: AbortController | null = null;
   let exportError: string | null = null;
   let exportWarnings: string[] = [];
-  let exportResult: { handle: string; pageCount: number; fileName: string } | null = null;
+  let exportResult: { pageCount: number; fileName: string } | null = null;
   let downloadHref: string | null = null;
   let addError: string | null = null;
   let destroyed = false;
   const thumbnails = new Map<number, ThumbnailHandle>();
   let observer: IntersectionObserver | null = null;
-  const pendingKeys = new Map<number, string>();
+  // Pending renders stamped by grid generation. Keys embed the visible
+  // index and are reused across refreshes, so a bare key comparison would
+  // let a stale (cancelled) batch delete a newer batch's bookkeeping.
+  let thumbGeneration = 0;
+  const pendingKeys = new Map<number, { key: string; generation: number }>();
 
   const root = document.createElement("div");
   root.className = "page-editor";
@@ -247,6 +251,14 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
     for (const file of incoming) {
       if (exporting) break;
       try {
+        // Pre-allocation gate: enforce count plus per-source and combined
+        // byte caps from `file.size` before touching `arrayBuffer`/PDF.js.
+        checkSourceCapacity(editorState, file.size);
+      } catch (error) {
+        addError = `${file.name || "PDF"}: ${editorLimitMessage(error)}`;
+        continue;
+      }
+      try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         checkSourceCapacity(editorState, bytes.length);
         const handle = await loader.openDocument(bytes);
@@ -319,7 +331,20 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
   function renderGrid(): void {
     observer?.disconnect();
     observer = null;
+    // Full refresh invalidates every in-flight render: keys embed the
+    // visible index, so reorder/delete/reset/source-removal all obsolete
+    // old tasks. Cancel them and release stale canvas accounting before
+    // dropping DOM nodes so caps hold in reality, not just counters.
+    const nextKeys = new Set<string>();
+    editorState.manifest.pages.forEach((entry, index) => {
+      nextKeys.add(`${entry.sourceId}:${entry.page}@${index}`);
+    });
+    for (const pending of pendingKeys.values()) {
+      store.cancelRender(pending.key);
+    }
     pendingKeys.clear();
+    thumbGeneration += 1;
+    store.unmountStale(nextKeys);
     thumbnails.clear();
     grid.replaceChildren();
     const pages = editorState.manifest.pages;
@@ -429,7 +454,8 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
     const entry = editorState.manifest.pages[index];
     const handle = store.getDocument(entry.sourceId);
     if (!handle) return;
-    pendingKeys.set(index, key);
+    const generation = thumbGeneration;
+    pendingKeys.set(index, { key, generation });
     store.cancelRender(key);
     await store.scheduleRender(key, (isCancelled) => {
       let cancelInner: (() => void) | null = null;
@@ -438,13 +464,26 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
         const page = await handle.getPage(entry.page);
         if (isCancelled() || destroyed) return;
         const live = thumbnails.get(index);
-        if (!live || pendingKeys.get(index) !== key) return;
+        if (!live || pendingKeys.get(index)?.key !== key) return;
         const render = page.render(live.canvas);
         cancelInner = (): void => render.cancel();
         await render.done.catch(() => undefined);
         if (isCancelled() || destroyed) return;
-        if (pendingKeys.get(index) !== key) return;
-        store.trackMounted(key, thumbnailByteSize(live.canvas.width, live.canvas.height));
+        if (pendingKeys.get(index)?.key !== key) return;
+        const stillLive = thumbnails.get(index);
+        if (!stillLive) return;
+        const evicted = store.trackMounted(
+          key,
+          thumbnailByteSize(stillLive.canvas.width, stillLive.canvas.height),
+          stillLive.canvas
+        );
+        for (const evictedKey of evicted) {
+          for (const [pendingIndex, pending] of [...pendingKeys]) {
+            if (pending.key === evictedKey && pending.generation !== generation) {
+              pendingKeys.delete(pendingIndex);
+            }
+          }
+        }
       })();
       return {
         done,
@@ -453,12 +492,14 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
         }
       };
     }).catch(() => undefined);
+    const settled = pendingKeys.get(index);
+    if (settled?.key === key && settled.generation === generation) pendingKeys.delete(index);
   }
 
   function cancelThumb(index: number): void {
-    const key = pendingKeys.get(index);
+    const pending = pendingKeys.get(index);
     pendingKeys.delete(index);
-    if (key) store.cancelRender(key);
+    if (pending) store.cancelRender(pending.key);
   }
 
   async function loadCapabilities(): Promise<void> {
@@ -510,7 +551,10 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
       exportWarnings = [...(result.warnings ?? []), ...(result.compatWarnings ?? [])];
       const fileName = scope === "selection" ? "selection.pdf" : "pages.pdf";
       const blob = await downloadOutput(result.downloadUrl, exportController.signal);
-      exportResult = { handle: result.handle, pageCount: result.pageCount ?? snapshot.manifest.pages.length, fileName };
+      // The server consumes the retained artifact on a completed download,
+      // so the handle is dead from here on. Keep only the Blob/object URL
+      // locally; never present a server discard for a consumed output.
+      exportResult = { pageCount: result.pageCount ?? snapshot.manifest.pages.length, fileName };
       offerDownload(blob, fileName);
       exportStatus.textContent = "Export ready.";
     } catch (error) {
@@ -558,19 +602,25 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
     if (exportResult) {
       const again = document.createElement("p");
       again.className = "muted small";
-      again.textContent = "The download link works once. Export again for another copy.";
-      const discard = document.createElement("button");
-      discard.type = "button";
-      discard.className = "button button--secondary button--small";
-      discard.textContent = "Discard export";
-      const handle = exportResult.handle;
-      discard.addEventListener("click", () => {
-        void discardOutput(handle).catch(() => undefined);
+      again.textContent = "This file is saved locally in your browser. Keep this view open to download it again.";
+      const clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "button button--secondary button--small";
+      clear.textContent = "Clear result";
+      clear.addEventListener("click", () => {
+        if (downloadHref) {
+          try {
+            URL.revokeObjectURL(downloadHref);
+          } catch {
+            // Best effort.
+          }
+          downloadHref = null;
+        }
         exportResult = null;
         resultBox.replaceChildren();
         refresh();
       });
-      resultBox.append(again, discard);
+      resultBox.append(again, clear);
     }
   }
 
@@ -597,7 +647,7 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
     } else if (capabilities && !capabilities.qpdf.available) {
       capsNote.hidden = false;
       capsNote.textContent =
-        "Page export needs qpdf 11.9.0 or newer on this computer. Preview still works; install qpdf to export.";
+        `Page export needs qpdf ${QPDF_SECURITY_FLOOR} or newer on this computer. Preview still works; install qpdf to export.`;
       capsRetry.hidden = true;
     } else {
       capsNote.hidden = true;
@@ -646,6 +696,11 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
       exportController?.abort();
       observer?.disconnect();
       observer = null;
+      for (const pending of pendingKeys.values()) {
+        store.cancelRender(pending.key);
+      }
+      pendingKeys.clear();
+      thumbnails.clear();
       if (downloadHref) {
         try {
           URL.revokeObjectURL(downloadHref);

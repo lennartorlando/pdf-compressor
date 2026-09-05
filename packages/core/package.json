@@ -12,6 +12,10 @@
     "./page-manifest": {
       "types": "./dist/page-manifest.d.ts",
       "import": "./dist/page-manifest.js"
+    },
+    "./native-floors": {
+      "types": "./dist/native-floors.d.ts",
+      "import": "./dist/native-floors.js"
     }
   },
   "scripts": {

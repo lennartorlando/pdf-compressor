@@ -15,12 +15,8 @@ import { runProcess, type ProcessResult, type RunProcessOptions } from "./proces
  * byte, page, and runtime limits.
  */
 
-/** Feature floor: `--file=`/`--range=` page-selection syntax needs qpdf 11.9.0+. */
-export const QPDF_FEATURE_FLOOR = "11.9.0";
-/** Security floor: local certification covers exactly 12.4.1; fail closed below. */
-export const QPDF_SECURITY_FLOOR = "12.4.1";
-/** Security floor for the optional Ghostscript compression candidate. */
-export const GHOSTSCRIPT_SECURITY_FLOOR = "10.07.1";
+import { QPDF_SECURITY_FLOOR } from "../native-floors.js";
+export { QPDF_FEATURE_FLOOR, QPDF_SECURITY_FLOOR, GHOSTSCRIPT_SECURITY_FLOOR } from "../native-floors.js";
 
 export const NATIVE_PARSER_RISK_NOTE =
   "Native PDF parsing runs with the user account's filesystem authority and is not OS-sandboxed; " +

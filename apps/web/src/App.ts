@@ -1,4 +1,4 @@
-import { compressFile, downloadUrl } from "./api/client.js";
+import { compressFile, downloadOutput } from "./api/client.js";
 import { createFileDropzone } from "./components/FileDropzone.js";
 import { createJobProgress, setProgress } from "./components/JobProgress.js";
 import { createProfileSelector } from "./components/ProfileSelector.js";
@@ -18,6 +18,19 @@ function mountCompressor(root: HTMLElement): void {
   let selectedFile: File | undefined;
   let selectedProfile: CompressionProfileName = "balanced";
   let currentController: AbortController | undefined;
+  let compressObjectUrl: string | null = null;
+  let mounted = true;
+
+  function revokeCompressUrl(): void {
+    if (compressObjectUrl) {
+      try {
+        URL.revokeObjectURL(compressObjectUrl);
+      } catch {
+        // Best effort.
+      }
+      compressObjectUrl = null;
+    }
+  }
 
   const title = document.createElement("h1");
   title.textContent = "PDF Compressor";
@@ -42,6 +55,8 @@ function mountCompressor(root: HTMLElement): void {
   editorButton.className = "button button--secondary";
   editorButton.textContent = "Edit pages";
   editorButton.addEventListener("click", () => {
+    revokeCompressUrl();
+    mounted = false;
     void mountEditor(root);
   });
 
@@ -49,6 +64,7 @@ function mountCompressor(root: HTMLElement): void {
     selectedFile = file;
     button.disabled = false;
     setProgress(progress, `${file.name} selected`);
+    revokeCompressUrl();
     result.innerHTML = "";
   });
 
@@ -59,15 +75,24 @@ function mountCompressor(root: HTMLElement): void {
   button.addEventListener("click", async () => {
     if (!selectedFile) return;
     currentController = new AbortController();
+    const signal = currentController.signal;
     button.disabled = true;
     cancelButton.disabled = false;
     setProgress(progress, "Compressing locally...");
+    revokeCompressUrl();
     result.innerHTML = "";
 
     try {
-      const response = await compressFile(selectedFile, selectedProfile, currentController.signal);
+      const response = await compressFile(selectedFile, selectedProfile, signal);
       if (response.ok && response.summary && response.downloadUrl) {
-        renderResult(result, response.summary, downloadUrl(response.downloadUrl));
+        // The /api/outputs download requires the session cookie plus the
+        // launch token, which a plain anchor cannot send. Fetch it with
+        // credentials and expose a local object URL to the user instead.
+        const blob = await downloadOutput(response.downloadUrl, signal);
+        if (!mounted || signal.aborted) return;
+        revokeCompressUrl();
+        compressObjectUrl = URL.createObjectURL(blob);
+        renderResult(result, response.summary, compressObjectUrl, "compressed.pdf");
         setProgress(progress, "Done");
       } else {
         renderError(result, response.message ?? "Compression failed.");

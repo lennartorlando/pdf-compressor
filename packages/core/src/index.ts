@@ -19,6 +19,8 @@ export {
   QPDF_FEATURE_FLOOR,
   QPDF_SECURITY_FLOOR,
   GHOSTSCRIPT_SECURITY_FLOOR,
+} from "./native-floors.js";
+export {
   NATIVE_PARSER_RISK_NOTE,
   parseVersionTuple,
   compareVersionTuples,

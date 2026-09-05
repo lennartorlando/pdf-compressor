@@ -67,6 +67,16 @@ export function thumbnailByteSize(width: number, height: number): number {
 }
 
 /**
+ * Release a decoded canvas backing store. Resetting the dimensions drops
+ * the pixel buffer in every browser engine (setting `width` alone already
+ * clears the bitmap), so no 2D context is needed here.
+ */
+function releaseCanvasBacking(canvas: HTMLCanvasElement): void {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
+/**
  * Real lazy loader. The display module resolves on first use only; the
  * worker URL is a Vite-emitted local asset from the same pinned package.
  * Scripting and dynamic evaluation stay disabled and optional font/CMap
@@ -281,6 +291,7 @@ export class ThumbnailWorkQueue {
 export class PreviewStore {
   private readonly documents = new Map<string, PdfJsDocumentHandle>();
   private readonly mounted = new Map<string, number>();
+  private readonly canvasRefs = new Map<string, HTMLCanvasElement>();
   private mountedBytes = 0;
   readonly queue: ThumbnailWorkQueue;
 
@@ -337,11 +348,20 @@ export class PreviewStore {
     return [...this.scheduledKeys].filter((key) => key.startsWith(prefix));
   }
 
-  trackMounted(key: string, bytes: number): string[] {
+  trackMounted(key: string, bytes: number, canvas?: HTMLCanvasElement): string[] {
     const previous = this.mounted.get(key);
     if (previous !== undefined) {
       this.mountedBytes -= previous;
       this.mounted.delete(key);
+    }
+    const previousCanvas = this.canvasRefs.get(key);
+    if (previousCanvas !== undefined && previousCanvas !== canvas) {
+      releaseCanvasBacking(previousCanvas);
+    }
+    if (canvas !== undefined) {
+      this.canvasRefs.set(key, canvas);
+    } else if (previous === undefined) {
+      this.canvasRefs.delete(key);
     }
     this.mounted.set(key, bytes);
     this.mountedBytes += bytes;
@@ -351,6 +371,10 @@ export class PreviewStore {
       if (mountedKey === key && this.mounted.size === 1) break;
       this.mounted.delete(mountedKey);
       this.mountedBytes -= mountedBytes;
+      this.cancelRender(mountedKey);
+      const evictedCanvas = this.canvasRefs.get(mountedKey);
+      this.canvasRefs.delete(mountedKey);
+      if (evictedCanvas !== undefined) releaseCanvasBacking(evictedCanvas);
       evicted.push(mountedKey);
       if (mountedKey === key) break;
     }
@@ -363,6 +387,32 @@ export class PreviewStore {
       this.mounted.delete(key);
       this.mountedBytes -= bytes;
     }
+    const canvas = this.canvasRefs.get(key);
+    if (canvas !== undefined) {
+      this.canvasRefs.delete(key);
+      releaseCanvasBacking(canvas);
+    }
+    this.cancelRender(key);
+  }
+
+  /** Snapshot of tracked thumbnail keys for stale-entry reconciliation. */
+  mountedKeys(): string[] {
+    return [...this.mounted.keys()];
+  }
+
+  /**
+   * Unmount every tracked key not in `keep`, releasing its canvas backing
+   * store and cancelling its pending render. Returns the removed keys.
+   */
+  unmountStale(keep: ReadonlySet<string>): string[] {
+    const removed: string[] = [];
+    for (const key of [...this.mounted.keys()]) {
+      if (!keep.has(key)) {
+        this.unmount(key);
+        removed.push(key);
+      }
+    }
+    return removed;
   }
 
   get mountedCount(): number {
@@ -375,6 +425,10 @@ export class PreviewStore {
 
   async destroy(): Promise<void> {
     this.queue.cancelAll();
+    for (const canvas of [...this.canvasRefs.values()]) {
+      releaseCanvasBacking(canvas);
+    }
+    this.canvasRefs.clear();
     this.mounted.clear();
     this.mountedBytes = 0;
     for (const [sourceId, handle] of [...this.documents]) {
