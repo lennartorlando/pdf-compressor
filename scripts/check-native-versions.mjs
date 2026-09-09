@@ -80,10 +80,13 @@ export function parseGhostscriptVersion(output) {
   return parseTuple(first) ? first : null;
 }
 
-/** OCRmyPDF prints a semantic version, with or without a tool-name prefix. */
-export function parseOcrMyPdfVersion(output) {
-  const match = /(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/.exec(String(output).trim());
-  return match ? match[1] : null;
+/** OCRmyPDF writes messages to stderr, but older packages may use stdout. */
+export function parseOcrMyPdfVersion(stdout, stderr = "") {
+  for (const output of [stderr, stdout]) {
+    const match = /(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/.exec(String(output).trim());
+    if (match) return match[1];
+  }
+  return null;
 }
 
 export function meetsFloor(found, floor) {
@@ -149,7 +152,7 @@ if (invokedDirectly) {
   if (!ocrmypdf.ok) {
     console.log("check-native-versions: OCRmyPDF not found; OCR stays disabled (optional).");
   } else {
-    const ocrVersion = parseOcrMyPdfVersion(ocrmypdf.stdout);
+    const ocrVersion = parseOcrMyPdfVersion(ocrmypdf.stdout, ocrmypdf.stderr);
     if (!ocrVersion) {
       console.error("check-native-versions: FAIL: could not parse OCRmyPDF version output; failing closed.");
       process.exit(1);
