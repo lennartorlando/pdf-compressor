@@ -14,6 +14,8 @@ export interface RunProcessOptions {
   maxStdoutBytes?: number;
   /** Private working directory for the child. Defaults to the OS temp dir. */
   cwd?: string;
+  /** Private scratch directory exposed through TMPDIR, TMP, and TEMP. */
+  tempDir?: string;
 }
 
 export interface ProcessResult {
@@ -49,7 +51,7 @@ const MINIMAL_ENV_KEYS = [
   "FONTCONFIG_FILE"
 ];
 
-export function minimalProcessEnv(): Record<string, string> {
+export function minimalProcessEnv(tempDir?: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of MINIMAL_ENV_KEYS) {
     const value = process.env[key];
@@ -57,6 +59,12 @@ export function minimalProcessEnv(): Record<string, string> {
   }
   if (env["XDG_CACHE_HOME"] === undefined) {
     env["XDG_CACHE_HOME"] = join(tmpdir(), "pdf-compressor-cache");
+  }
+  if (tempDir !== undefined) {
+    env["TMPDIR"] = tempDir;
+    env["TMP"] = tempDir;
+    env["TEMP"] = tempDir;
+    env["XDG_CACHE_HOME"] = join(tempDir, "cache");
   }
   return env;
 }
@@ -121,7 +129,7 @@ export async function runProcess(
     try {
       child = spawn(command, [...args], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: minimalProcessEnv(),
+        env: minimalProcessEnv(options.tempDir),
         cwd: options.cwd ?? tmpdir(),
         detached: process.platform !== "win32",
         windowsHide: true

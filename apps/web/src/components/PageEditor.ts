@@ -3,7 +3,8 @@ import {
   exportPages,
   getCapabilities,
   type Capabilities,
-  type ExportCompression
+  type ExportCompression,
+  type OcrLanguage
 } from "../api/client.js";
 import { QPDF_SECURITY_FLOOR } from "@pdf-compressor/core/native-floors";
 import {
@@ -61,6 +62,8 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
   let capabilitiesError: string | null = null;
   let scope: ExportScope = "all";
   let compression: ExportCompression = "none";
+  let ocrEnabled = false;
+  let ocrLanguages: OcrLanguage[] = ["deu", "eng"];
   let exporting = false;
   let exportController: AbortController | null = null;
   let exportError: string | null = null;
@@ -201,6 +204,17 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
     onCompressionChange: (next) => {
       compression = next;
       refresh();
+    },
+    onOcrEnabledChange: (next) => {
+      if (exporting) return;
+      ocrEnabled = next;
+      if (next) compression = "none";
+      renderExportSection();
+    },
+    onOcrLanguagesChange: (next) => {
+      if (exporting) return;
+      ocrLanguages = next;
+      renderExportSection();
     }
   });
   const exportRow = document.createElement("div");
@@ -553,6 +567,7 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
         manifest: snapshot.manifest,
         files: snapshot.sourceIds.map((id) => files.get(id)!),
         compression: compression === "none" || capabilities?.ghostscript.available ? compression : "none",
+        ocr: ocrEnabled ? { languages: [...ocrLanguages], autoRotate: true } : null,
         signal: exportController.signal
       });
       if (!result.ok || !result.handle || !result.downloadUrl) {
@@ -641,12 +656,25 @@ export function createPageEditor(deps: PageEditorDeps): PageEditorHandle {
       scope: editorState.selection.length === 0 && scope === "selection" ? "all" : scope,
       compression,
       ghostscriptAvailable: capabilities ? capabilities.ghostscript.available : null,
+      ocrEnabled,
+      ocrLanguages,
+      ocrmypdfAvailable: capabilities ? capabilities.ocrmypdf?.available ?? false : null,
+      tesseractAvailable: capabilities ? capabilities.tesseract?.available ?? false : null,
+      tesseractLanguages: capabilities?.tesseract?.languages ?? [],
       exporting
     });
     if (editorState.selection.length === 0 && scope === "selection") scope = "all";
     const qpdfReady = capabilities?.qpdf.available === true;
+    const ocrReady = !ocrEnabled || (
+      capabilities?.ocrmypdf?.available === true &&
+      capabilities.tesseract?.available === true &&
+      ocrLanguages.length > 0 &&
+      ocrLanguages.every((language) => capabilities?.tesseract?.languages.includes(language)) &&
+      capabilities.tesseract.languages.includes("osd")
+    );
     const hasPages = editorState.manifest.pages.length > 0;
-    exportButton.disabled = exporting || !hasPages || !qpdfReady;
+    exportButton.textContent = ocrEnabled ? "Export searchable PDF" : "Export PDF";
+    exportButton.disabled = exporting || !hasPages || !qpdfReady || !ocrReady;
     cancelButton.disabled = !exporting;
     backButton.disabled = exporting;
     backLink.disabled = exporting;

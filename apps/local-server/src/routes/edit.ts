@@ -6,11 +6,17 @@ import {
   compareVersionTuples,
   CompressionError,
   getGhostscriptVersion,
+  getOcrMyPdfVersion,
   getQpdfVersion,
+  getTesseractLanguages,
+  getTesseractVersion,
   GHOSTSCRIPT_SECURITY_FLOOR,
+  OCRMY_PDF_FEATURE_FLOOR,
   parseVersionTuple,
   QPDF_SECURITY_FLOOR,
-  type CompressionProfileName
+  type CompressionProfileName,
+  type NativeCallOptions,
+  type OcrOptions
 } from "@pdf-compressor/core";
 import { parsePageManifest } from "@pdf-compressor/core/page-manifest";
 import { LIMITS, RETAINED_OUTPUT_CAPACITY, type JobManager } from "../jobs.js";
@@ -36,20 +42,51 @@ export interface CapabilityStatus {
 export interface Capabilities {
   qpdf: CapabilityStatus;
   ghostscript: CapabilityStatus;
+  ocrmypdf: CapabilityStatus;
+  tesseract: CapabilityStatus & { languages: string[] };
 }
 
-/** qpdf and Ghostscript capabilities are probed independently. */
-export async function getCapabilities(deps: CapabilityDeps = {}): Promise<Capabilities> {
-  const [qpdf, ghostscript] = await Promise.all([
-    probe("qpdf", deps.getQpdfVersion),
-    probe("gs", deps.getGhostscriptVersion)
+export const CAPABILITY_PROBE_TIMEOUT_MS = 15_000;
+
+/** Native capabilities are probed independently so one missing tool does not hide the others. */
+export async function getCapabilities(
+  deps: CapabilityDeps = {},
+  options: NativeCallOptions = { timeoutMs: CAPABILITY_PROBE_TIMEOUT_MS }
+): Promise<Capabilities> {
+  const probes = await Promise.allSettled([
+    probeVersion(() => (deps.getQpdfVersion ?? getQpdfVersion)(options), QPDF_SECURITY_FLOOR),
+    probeVersion(() => (deps.getGhostscriptVersion ?? getGhostscriptVersion)(options), GHOSTSCRIPT_SECURITY_FLOOR),
+    probeVersion(() => (deps.getOcrMyPdfVersion ?? getOcrMyPdfVersion)(options), OCRMY_PDF_FEATURE_FLOOR),
+    probeTesseract(
+      () => (deps.getTesseractVersion ?? getTesseractVersion)(options),
+      () => (deps.getTesseractLanguages ?? getTesseractLanguages)(options)
+    )
   ]);
+  const rejected = probes.find((probe): probe is PromiseRejectedResult => probe.status === "rejected");
+  if (rejected) throw rejected.reason;
+  const [qpdf, ghostscript, ocrmypdf, tesseract] = probes.map(
+    (probe) => (probe as PromiseFulfilledResult<unknown>).value
+  ) as [CapabilityStatus, CapabilityStatus, CapabilityStatus, Capabilities["tesseract"]];
+  return { qpdf, ghostscript, ocrmypdf, tesseract };
+}
+
+async function getPageExportCapabilities(
+  compression: CompressionProfileName | null,
+  options: NativeCallOptions
+): Promise<Pick<Capabilities, "qpdf" | "ghostscript">> {
+  const qpdf = await probeVersion(() => getQpdfVersion(options), QPDF_SECURITY_FLOOR);
+  const ghostscript = compression === null
+    ? { available: false, version: null }
+    : await probeVersion(() => getGhostscriptVersion(options), GHOSTSCRIPT_SECURITY_FLOOR);
   return { qpdf, ghostscript };
 }
 
 export interface CapabilityDeps {
-  getQpdfVersion?: () => Promise<string>;
-  getGhostscriptVersion?: () => Promise<string>;
+  getQpdfVersion?: (options?: NativeCallOptions) => Promise<string>;
+  getGhostscriptVersion?: (options?: NativeCallOptions) => Promise<string>;
+  getOcrMyPdfVersion?: (options?: NativeCallOptions) => Promise<string>;
+  getTesseractVersion?: (options?: NativeCallOptions) => Promise<string>;
+  getTesseractLanguages?: (options?: NativeCallOptions) => Promise<string[]>;
 }
 
 /** A readable version below the shared core floor reports unavailable. */
@@ -60,22 +97,44 @@ export function meetsNativeFloor(version: string, floor: string): boolean {
   return compareVersionTuples(found, required) >= 0;
 }
 
-async function probe(
-  command: "qpdf" | "gs",
-  getVersion?: () => Promise<string>
-): Promise<CapabilityStatus> {
+function rethrowTerminal(error: unknown): void {
+  if (error instanceof CompressionError && (error.code === "JOB_CANCELLED" || error.code === "JOB_TIMEOUT")) {
+    throw error;
+  }
+}
+
+async function probeVersion(getVersion: () => Promise<string>, floor?: string): Promise<CapabilityStatus> {
   try {
-    const version =
-      getVersion !== undefined
-        ? await getVersion()
-        : command === "qpdf"
-          ? await getQpdfVersion()
-          : await getGhostscriptVersion();
-    const floor = command === "qpdf" ? QPDF_SECURITY_FLOOR : GHOSTSCRIPT_SECURITY_FLOOR;
-    return { available: meetsNativeFloor(version, floor), version };
-  } catch {
+    const version = await getVersion();
+    return { available: floor ? meetsNativeFloor(version, floor) : true, version };
+  } catch (error) {
+    rethrowTerminal(error);
+    if (
+      error instanceof CompressionError &&
+      error.code === "NATIVE_VERSION_UNSUPPORTED" &&
+      typeof error.details?.["found"] === "string"
+    ) {
+      return { available: false, version: error.details["found"] };
+    }
     return { available: false, version: null };
   }
+}
+
+async function probeTesseract(
+  getVersion: () => Promise<string>,
+  getLanguages: () => Promise<string[]>
+): Promise<Capabilities["tesseract"]> {
+  const [version, languages] = await Promise.allSettled([getVersion(), getLanguages()]);
+  if (version.status === "rejected") rethrowTerminal(version.reason);
+  if (languages.status === "rejected") rethrowTerminal(languages.reason);
+  if (version.status === "fulfilled" && languages.status === "fulfilled") {
+    return { available: true, version: version.value, languages: languages.value };
+  }
+  return {
+    available: false,
+    version: version.status === "fulfilled" ? version.value : null,
+    languages: languages.status === "fulfilled" ? languages.value : []
+  };
 }
 
 function sanitizeExportError(error: unknown): { status: number; code: string } {
@@ -90,6 +149,7 @@ function sanitizeExportError(error: unknown): { status: number; code: string } {
       case "MANIFEST_INVALID_ROTATION":
       case "MANIFEST_EMPTY":
       case "OUTPUT_PAGE_LIMIT_EXCEEDED":
+      case "OCR_OPTIONS_INVALID":
         return { status: 400, code: error.code };
       case "OUTPUT_EXISTS":
       case "OUTPUT_WOULD_OVERWRITE_INPUT":
@@ -103,8 +163,12 @@ function sanitizeExportError(error: unknown): { status: number; code: string } {
       case "OUTPUT_INVALID":
       case "OUTPUT_TOO_LARGE":
         return { status: 422, code: error.code };
+      case "TEMP_QUOTA_EXCEEDED":
+      case "DISK_RESERVE_EXHAUSTED":
+        return { status: 507, code: error.code };
       case "NATIVE_VERSION_UNSUPPORTED":
       case "ENGINE_UNAVAILABLE":
+      case "OCR_LANGUAGE_UNAVAILABLE":
         return { status: 503, code: error.code };
       case "JOB_CANCELLED":
         return { status: 499, code: error.code };
@@ -128,6 +192,33 @@ function compressionFromUrl(url: URL): CompressionProfileName | null {
   throw new MultipartError("MANIFEST_INVALID", "Unknown compression profile.", 400);
 }
 
+/** Closed OCR query contract for both the browser and local agent clients. */
+export function ocrFromUrl(url: URL): OcrOptions | null {
+  const ocrValues = url.searchParams.getAll("ocr");
+  const rotateValues = url.searchParams.getAll("ocrAutoRotate");
+  if (ocrValues.length > 1 || rotateValues.length > 1) {
+    throw new CompressionError("OCR_OPTIONS_INVALID", "OCR query parameters may appear only once.");
+  }
+  const value = ocrValues[0];
+  const rotate = rotateValues[0];
+  if (value === undefined || value === "off") {
+    if (rotate !== undefined) {
+      throw new CompressionError("OCR_OPTIONS_INVALID", "OCR rotation cannot be set while OCR is off.");
+    }
+    return null;
+  }
+  if (value !== "deu" && value !== "eng" && value !== "deu+eng") {
+    throw new CompressionError("OCR_OPTIONS_INVALID", "OCR must be off, deu, eng, or deu+eng.");
+  }
+  if (rotate !== "true" && rotate !== "false") {
+    throw new CompressionError("OCR_OPTIONS_INVALID", "OCR automatic rotation must be true or false.");
+  }
+  return {
+    languages: value === "deu+eng" ? ["deu", "eng"] : [value],
+    autoRotate: rotate === "true"
+  };
+}
+
 /**
  * Bounded multipart page export. The caller holds the global native slot
  * and releases it after this handler settles. All non-final artifacts are
@@ -142,6 +233,14 @@ export async function handlePageExport(
   ctx: EditRouteContext
 ): Promise<void> {
   const { jobs } = ctx;
+  let ocr: OcrOptions | null;
+  try {
+    ocr = ocrFromUrl(url);
+  } catch (error) {
+    const mapped = sanitizeExportError(error);
+    writeJson(res, mapped.status, { ok: false, code: mapped.code, message: "OCR options are invalid." });
+    return;
+  }
   const claimed = Number(req.headers["content-length"]);
   const expectedIntake = Number.isInteger(claimed) && claimed > 0 ? claimed : LIMITS.maxTotalBytes;
   if (expectedIntake > LIMITS.maxTotalBytes) {
@@ -152,7 +251,11 @@ export async function handlePageExport(
   const { id: _jobTag, dir: jobDir } = await jobs.newJobDir("pages-");
   void _jobTag;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), jobs.jobTimeoutMs);
+  const deadline = { timedOut: false };
+  const timeout = setTimeout(() => {
+    deadline.timedOut = true;
+    controller.abort();
+  }, jobs.jobTimeoutMs);
   timeout.unref?.();
   // A response that closes before headers are written means the client went
   // away; a completed request stream alone must not cancel native work.
@@ -162,7 +265,7 @@ export async function handlePageExport(
   res.on("close", onResClose);
 
   try {
-    const outcome = await runExportWork(req, url, ctx, jobDir, controller);
+    const outcome = await runExportWork(req, url, ctx, jobDir, controller, ocr, deadline);
     // Attempt cleanup before responding; transient failures stay registered
     // with the job manager for its sweeper and shutdown retry.
     if (outcome.retainedDir === null) {
@@ -186,7 +289,9 @@ async function runExportWork(
   url: URL,
   ctx: EditRouteContext,
   jobDir: string,
-  controller: AbortController
+  controller: AbortController,
+  ocr: OcrOptions | null,
+  deadline: { timedOut: boolean }
 ): Promise<ExportOutcome> {
   const { jobs } = ctx;
   const fail = (status: number, code: string, message: string): ExportOutcome => ({
@@ -248,11 +353,14 @@ async function runExportWork(
       return fail(400, "MANIFEST_INVALID", "Source parts do not match the manifest sources.");
     }
 
-    const capabilities = await getCapabilities();
+    const capabilities = await getPageExportCapabilities(ocr ? null : compression, {
+      signal: controller.signal,
+      timeoutMs: jobs.jobTimeoutMs
+    });
     if (!capabilities.qpdf.available) {
       return fail(503, "EXPORT_UNAVAILABLE", "Page export is unavailable.");
     }
-    if (compression !== null && !capabilities.ghostscript.available) {
+    if (ocr === null && compression !== null && !capabilities.ghostscript.available) {
       return fail(503, "COMPRESSION_UNAVAILABLE", "Compression is unavailable.");
     }
 
@@ -268,9 +376,12 @@ async function runExportWork(
       manifest,
       destinationPath,
       compression,
+      ocr,
       signal: controller.signal,
       timeoutMs: jobs.jobTimeoutMs,
-      maxOutputBytes: LIMITS.maxOutputBytes
+      maxOutputBytes: LIMITS.maxOutputBytes,
+      workspaceParent: jobDir,
+      resourceCheck: (additionalBytes) => jobs.assertRuntimeCapacity(additionalBytes)
     });
     const outputStat = await stat(destinationPath);
     if (outputStat.size > LIMITS.maxOutputBytes) {
@@ -295,11 +406,15 @@ async function runExportWork(
         outputBytes: summary.outputBytes,
         engine: summary.engine,
         warnings: summary.warnings,
-        compatWarnings: summary.compatWarnings
+        compatWarnings: summary.compatWarnings,
+        ocr: summary.ocr
       },
       retainedDir: jobDir
     };
   } catch (error) {
+    if (deadline.timedOut) {
+      error = new CompressionError("JOB_TIMEOUT", "Export exceeded its runtime budget.");
+    }
     const mapped = sanitizeExportError(error);
     const message =
       mapped.status === 499

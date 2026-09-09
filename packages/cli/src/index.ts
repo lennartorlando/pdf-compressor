@@ -2,6 +2,8 @@
 import { runCompressCommand, usage as compressUsage } from "./commands/compress.js";
 import { runInspectCommand, inspectUsage } from "./commands/inspect.js";
 import { runAssembleCommand, assembleUsage } from "./commands/assemble.js";
+import { runOcrCommand, ocrUsage } from "./commands/ocr.js";
+import { runCapabilitiesCommand, capabilitiesUsage } from "./commands/capabilities.js";
 import { fileURLToPath } from "node:url";
 import type { NativeRunner } from "@pdf-compressor/core";
 import { exitCodes, type CliResult, usageErrorResult } from "./output.js";
@@ -11,7 +13,7 @@ export interface MainDeps {
 }
 
 export function usage(): string {
-  return [compressUsage(), inspectUsage(), assembleUsage()].join("");
+  return [compressUsage(), inspectUsage(), assembleUsage(), ocrUsage(), capabilitiesUsage()].join("");
 }
 
 function writeResult(result: CliResult): number {
@@ -39,6 +41,12 @@ export async function main(
     }
     if (command === "assemble") {
       return writeResult(await runAssembleCommand(args, { run: deps.run, signal: controller.signal }));
+    }
+    if (command === "ocr") {
+      return writeResult(await runOcrCommand(args, { run: deps.run, signal: controller.signal }));
+    }
+    if (command === "capabilities") {
+      return writeResult(await runCapabilitiesCommand(args, { run: deps.run, signal: controller.signal }));
     }
 
     if (argv.includes("--json")) {

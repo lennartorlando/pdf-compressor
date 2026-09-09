@@ -8,8 +8,11 @@ export interface TempWorkspace {
   cleanup(): Promise<void>;
 }
 
-export async function createTempWorkspace(prefix = "pdf-compressor-"): Promise<TempWorkspace> {
-  const directory = await mkdtemp(join(tmpdir(), prefix));
+export async function createTempWorkspace(
+  prefix = "pdf-compressor-",
+  parentDirectory = tmpdir()
+): Promise<TempWorkspace> {
+  const directory = await mkdtemp(join(parentDirectory, prefix));
   return {
     path: directory,
     file(name: string) {

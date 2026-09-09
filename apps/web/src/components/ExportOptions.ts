@@ -1,9 +1,11 @@
-import type { ExportCompression } from "../api/client.js";
+import type { ExportCompression, OcrLanguage } from "../api/client.js";
 import type { ExportScope } from "../editor/model.js";
 
 export interface ExportOptionsCallbacks {
   onScopeChange(scope: ExportScope): void;
   onCompressionChange(compression: ExportCompression): void;
+  onOcrEnabledChange(enabled: boolean): void;
+  onOcrLanguagesChange(languages: OcrLanguage[]): void;
 }
 
 export interface ExportOptionsState {
@@ -12,6 +14,11 @@ export interface ExportOptionsState {
   scope: ExportScope;
   compression: ExportCompression;
   ghostscriptAvailable: boolean | null;
+  ocrEnabled: boolean;
+  ocrLanguages: OcrLanguage[];
+  ocrmypdfAvailable: boolean | null;
+  tesseractAvailable: boolean | null;
+  tesseractLanguages: string[];
   exporting: boolean;
 }
 
@@ -87,7 +94,58 @@ export function createExportOptions(callbacks: ExportOptionsCallbacks): ExportOp
   const compressionNote = document.createElement("p");
   compressionNote.className = "export-options__note";
 
-  section.append(scopeGroup, compressionGroup, compressionNote);
+  const ocrGroup = document.createElement("div");
+  ocrGroup.className = "export-options__ocr";
+  const ocrToggleLabel = document.createElement("label");
+  ocrToggleLabel.className = "export-options__ocr-toggle";
+  const ocrToggle = document.createElement("input");
+  ocrToggle.type = "checkbox";
+  ocrToggle.name = "export-ocr";
+  ocrToggle.addEventListener("change", () => callbacks.onOcrEnabledChange(ocrToggle.checked));
+  const ocrToggleCopy = document.createElement("span");
+  const ocrTitle = document.createElement("strong");
+  ocrTitle.textContent = "Make text searchable";
+  const ocrDescription = document.createElement("span");
+  ocrDescription.className = "muted small";
+  ocrDescription.textContent = "Adds an invisible text layer. Existing text stays unchanged.";
+  ocrToggleCopy.append(ocrTitle, ocrDescription);
+  ocrToggleLabel.append(ocrToggle, ocrToggleCopy);
+
+  const languageGroup = document.createElement("fieldset");
+  languageGroup.className = "export-options__languages";
+  const languageLegend = document.createElement("legend");
+  languageLegend.textContent = "Languages";
+  languageGroup.append(languageLegend);
+  const languageInputs = new Map<OcrLanguage, HTMLInputElement>();
+  for (const choice of [
+    { value: "deu" as const, label: "German" },
+    { value: "eng" as const, label: "English" }
+  ]) {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = choice.value;
+    input.addEventListener("change", () => {
+      const languages = [...languageInputs]
+        .filter(([, candidate]) => candidate.checked)
+        .map(([language]) => language);
+      callbacks.onOcrLanguagesChange(languages);
+    });
+    const text = document.createElement("span");
+    text.textContent = choice.label;
+    label.append(input, text);
+    languageGroup.append(label);
+    languageInputs.set(choice.value, input);
+  }
+  const rotateNote = document.createElement("p");
+  rotateNote.className = "export-options__note";
+  rotateNote.textContent = "Automatic rotation is always on.";
+  languageGroup.append(rotateNote);
+  const ocrSetup = document.createElement("p");
+  ocrSetup.className = "export-options__note warn";
+  ocrGroup.append(ocrToggleLabel, languageGroup, ocrSetup);
+
+  section.append(scopeGroup, compressionGroup, compressionNote, ocrGroup);
 
   function render(state: ExportOptionsState): void {
     allText.textContent = `All ${state.totalCount} pages`;
@@ -100,10 +158,12 @@ export function createExportOptions(callbacks: ExportOptionsCallbacks): ExportOp
       allRadio.checked = true;
     }
 
-    const showCompression = state.ghostscriptAvailable === true;
+    const showCompression = state.ghostscriptAvailable === true && !state.ocrEnabled;
     compressionGroup.hidden = !showCompression;
-    compressionNote.hidden = state.ghostscriptAvailable !== false;
-    if (state.ghostscriptAvailable === false) {
+    compressionNote.hidden = state.ghostscriptAvailable !== false && !state.ocrEnabled;
+    if (state.ocrEnabled) {
+      compressionNote.textContent = "Compression is off for searchable exports.";
+    } else if (state.ghostscriptAvailable === false) {
       compressionNote.textContent = "Compression is unavailable here: Ghostscript was not found on this computer.";
     } else {
       compressionNote.textContent = "";
@@ -112,6 +172,32 @@ export function createExportOptions(callbacks: ExportOptionsCallbacks): ExportOp
       entry.input.checked = state.compression === entry.value;
       entry.input.disabled = state.exporting;
     }
+
+    ocrToggle.checked = state.ocrEnabled;
+    ocrToggle.disabled = state.exporting;
+    languageGroup.hidden = !state.ocrEnabled;
+    for (const [language, input] of languageInputs) {
+      input.checked = state.ocrLanguages.includes(language);
+      input.disabled = state.exporting;
+    }
+    const setup: string[] = [];
+    if (state.ocrEnabled && state.ocrmypdfAvailable === false) {
+      setup.push("Install OCRmyPDF 17 or newer with brew install ocrmypdf.");
+    }
+    if (state.ocrEnabled && state.tesseractAvailable === false) {
+      setup.push("Install Tesseract with brew install tesseract.");
+    }
+    if (state.ocrEnabled && state.ocrLanguages.some((language) => !state.tesseractLanguages.includes(language))) {
+      setup.push("Install German and English language data with brew install tesseract-lang.");
+    }
+    if (state.ocrEnabled && !state.tesseractLanguages.includes("osd")) {
+      setup.push("Install Tesseract orientation data (osd) for automatic rotation.");
+    }
+    if (state.ocrEnabled && state.ocrLanguages.length === 0) {
+      setup.push("Choose at least one OCR language.");
+    }
+    ocrSetup.textContent = setup.join(" ");
+    ocrSetup.hidden = setup.length === 0;
   }
 
   render({
@@ -120,6 +206,11 @@ export function createExportOptions(callbacks: ExportOptionsCallbacks): ExportOp
     scope: "all",
     compression: "none",
     ghostscriptAvailable: null,
+    ocrEnabled: false,
+    ocrLanguages: ["deu", "eng"],
+    ocrmypdfAvailable: null,
+    tesseractAvailable: null,
+    tesseractLanguages: [],
     exporting: false
   });
   return { element: section, update: render };

@@ -467,7 +467,7 @@ describe("job lifecycle", () => {
         req.write(body);
         req.end();
       });
-      expect([499, 504]).toContain(result.status);
+      expect(result.status).toBe(504);
       expect(await readdir(tightJobs.tempRoot)).toEqual([]);
     } finally {
       await new Promise<void>((resolve) => tightHandle.server.close(() => resolve()));

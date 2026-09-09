@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OCR option A: export toggle</title>
+  <style>
+    :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:#18202f;background:#f5f7fb}*{box-sizing:border-box}body{margin:0}.app{width:min(760px,calc(100vw - 32px));margin:28px auto 64px}.top{display:flex;align-items:center;gap:12px;margin-bottom:10px}.button{border:0;border-radius:8px;min-height:40px;padding:0 15px;background:#1f7a5c;color:#fff;font-weight:700}.secondary{background:#dfe5f0;color:#26324a}.small{font-size:13px;color:#65708a}.card{margin-top:14px;padding:18px;border:1px solid #d9deea;border-radius:10px;background:#fff}.card h2{font-size:18px;margin:0 0 4px}.muted{color:#4c5870}.thumbs{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px}.thumb{padding:7px;border:1px solid #d9deea;border-radius:8px}.page{aspect-ratio:3/4;border-radius:4px;background:linear-gradient(#eef1f7 0 12%,transparent 12%),repeating-linear-gradient(180deg,#ccd3df 0 3px,transparent 3px 14px);background-size:100%,72% 65%;background-position:0,center;background-repeat:no-repeat}.caption{font-size:12px;margin-top:6px}.scope,.choices{display:grid;grid-template-columns:1fr 1fr;gap:8px}.choices{grid-template-columns:repeat(3,1fr)}label.choice{padding:10px;border:1px solid #d9deea;border-radius:8px;font-size:14px}.ocr{margin-top:14px;padding:14px;border:1px solid #bdd8ce;border-radius:9px;background:#f3faf7}.switchline{display:flex;align-items:center;justify-content:space-between;gap:12px}.switch{width:44px;height:24px;border-radius:99px;background:#1f7a5c;position:relative}.switch:after{content:"";position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;right:3px;top:3px}.status{margin-top:10px;padding:10px;border:1px solid #e6cf8f;border-radius:8px;background:#fdf8e7;color:#5c4a12;font-size:13px}.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}.tag{padding:3px 9px;border-radius:20px;background:#eef1f7;font-size:12px}.variant{margin-left:auto;padding:4px 9px;border-radius:20px;background:#e5f3ee;color:#176148;font-size:12px;font-weight:700}@media(max-width:680px){.thumbs{grid-template-columns:repeat(2,1fr)}.choices{grid-template-columns:1fr}.scope{grid-template-columns:1fr}}
+  </style>
+</head>
+<body><main class="app">
+  <header class="top"><button class="button secondary">← Compressor</button><strong>Page editor</strong><span class="small">Add, arrange, export</span><span class="variant">Option A</span></header>
+  <section class="card"><h2>1. Add PDFs</h2><p class="small muted">2 files · 8 pages · Local only</p></section>
+  <section class="card"><h2>2. Arrange combined sequence</h2><p class="small muted">Reorder, rotate, and delete pages.</p><div class="thumbs"><div class="thumb"><div class="page"></div><div class="caption">Contract · 1</div></div><div class="thumb"><div class="page"></div><div class="caption">Contract · 2</div></div><div class="thumb"><div class="page"></div><div class="caption">Annex · 1</div></div><div class="thumb"><div class="page"></div><div class="caption">Annex · 2</div></div></div></section>
+  <section class="card"><h2>3. Export</h2><p class="small muted">OCR sits beside the existing export options. One step, no new screen.</p>
+    <div class="scope"><label class="choice"><input type="radio" checked> All 8 pages</label><label class="choice"><input type="radio"> Selection only (0)</label></div>
+    <div class="ocr"><div class="switchline"><div><strong>Make text searchable</strong><div class="small muted">Adds an invisible text layer during export.</div></div><span class="switch" aria-hidden="true"></span></div>
+      <p class="small"><strong>Document languages</strong></p><div class="choices"><label class="choice"><input type="checkbox" checked> German</label><label class="choice"><input type="checkbox" checked> English</label><label class="choice"><input type="checkbox"> Other</label></div>
+      <div class="status">OCR needs setup: OCRmyPDF and German language data were not found. <u>Show install command</u></div>
+    </div>
+    <div class="row"><button class="button">Export searchable PDF</button><button class="button secondary">Cancel</button><span class="tag">Existing text stays unchanged</span><span class="tag">Auto-rotate</span></div>
+  </section>
+</main></body></html>

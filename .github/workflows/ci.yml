@@ -23,9 +23,13 @@ jobs:
           cache: npm
       - name: Install native tools
         run: |
-          brew install qpdf ghostscript
+          brew install qpdf ghostscript ocrmypdf tesseract-lang
           qpdf --version
           gs --version || true
+          ocrmypdf --version
+          tesseract --list-langs | grep -x deu
+          tesseract --list-langs | grep -x eng
+          tesseract --list-langs | grep -x osd
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

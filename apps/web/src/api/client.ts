@@ -1,5 +1,8 @@
 import type { CompressionProfileName } from "../profiles.js";
 import type { PageManifest } from "@pdf-compressor/core/page-manifest";
+import type { OcrLanguage, OcrMetadata, OcrOptions } from "@pdf-compressor/core";
+
+export type { OcrLanguage, OcrMetadata } from "@pdf-compressor/core";
 
 export interface CompressionResponse {
   ok: boolean;
@@ -112,6 +115,8 @@ export interface CapabilityStatus {
 export interface Capabilities {
   qpdf: CapabilityStatus;
   ghostscript: CapabilityStatus;
+  ocrmypdf: CapabilityStatus;
+  tesseract: CapabilityStatus & { languages: string[] };
 }
 
 export async function getCapabilities(signal?: AbortSignal): Promise<Capabilities> {
@@ -147,6 +152,7 @@ export interface ExportPagesInput {
   /** Source files in distinct-manifest-source order; each streams once. */
   files: File[];
   compression: ExportCompression;
+  ocr: Required<OcrOptions> | null;
   signal?: AbortSignal;
 }
 
@@ -160,6 +166,7 @@ export interface ExportPagesResult {
   engine?: string;
   warnings?: string[];
   compatWarnings?: string[];
+  ocr?: OcrMetadata;
   code?: string;
   message?: string;
 }
@@ -174,7 +181,14 @@ export async function exportPages(input: ExportPagesInput): Promise<ExportPagesR
     form.append("source", file, "source.pdf");
   }
   const compression = input.compression === "none" ? "none" : input.compression;
-  const response = await authedFetch(`/api/pages/export?compression=${encodeURIComponent(compression)}`, {
+  const query = new URLSearchParams({ compression });
+  if (input.ocr === null) {
+    query.set("ocr", "off");
+  } else {
+    query.set("ocr", input.ocr.languages.join("+"));
+    query.set("ocrAutoRotate", String(input.ocr.autoRotate));
+  }
+  const response = await authedFetch(`/api/pages/export?${query.toString()}`, {
     method: "POST",
     body: form,
     signal: input.signal

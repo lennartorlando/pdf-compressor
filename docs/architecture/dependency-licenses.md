@@ -8,6 +8,8 @@ The project starts with AGPL-3.0-or-later to keep the repository compatible with
 |---|---|---|
 | qpdf | Lossless structural optimization and page assembly | Permissive upstream licensing; suitable for conservative optimization. |
 | Ghostscript | `pdfwrite` lossy compression profiles | AGPL/commercial upstream licensing; bundling or tight distribution must honor AGPL obligations. |
+| OCRmyPDF | Local searchable-text pipeline and PDF orchestration | MPL-2.0 upstream; calls local qpdf, Ghostscript, Tesseract, and related tools whose licenses must be reviewed for distribution. |
+| Tesseract OCR | German and English text recognition | Apache-2.0 upstream; language data is installed separately. |
 
 ## Bundled JavaScript Dependencies
 

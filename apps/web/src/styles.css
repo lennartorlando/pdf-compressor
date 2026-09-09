@@ -370,6 +370,59 @@ h1 {
   font-size: 13px;
 }
 
+.export-options__ocr {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #d9deea;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.export-options__ocr-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.export-options__ocr-toggle > input {
+  margin-top: 3px;
+}
+
+.export-options__ocr-toggle > span {
+  display: grid;
+  gap: 3px;
+}
+
+.export-options__languages {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  margin: 0;
+  padding: 10px 0 0 28px;
+  border: 0;
+}
+
+.export-options__languages[hidden] {
+  display: none;
+}
+
+.export-options__languages legend {
+  width: 100%;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.export-options__languages label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
 .exportrow {
   display: flex;
   flex-wrap: wrap;
@@ -417,5 +470,14 @@ h1 {
   .profiles,
   .result dl {
     grid-template-columns: 1fr;
+  }
+
+  .export-options__scope,
+  .export-options__compression {
+    grid-template-columns: 1fr;
+  }
+
+  .export-options__languages {
+    padding-left: 0;
   }
 }

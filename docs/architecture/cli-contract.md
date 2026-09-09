@@ -1,8 +1,7 @@
 # CLI Contract
 
-The CLI exposes the same shared compression and page core used by the local web app.
-`inspect` and `assemble` call the shared `inspectSources` / `assemblePages`
-primitives directly. The CLI adds no validation, inspection, or assembly
+The CLI exposes the same shared compression, page, and OCR core used by the local web app.
+`inspect`, `assemble`, and `ocr` call shared core primitives directly. The CLI adds no validation, inspection, OCR, or assembly
 behavior of its own and no orchestration layer.
 
 ## Commands
@@ -10,7 +9,9 @@ behavior of its own and no orchestration layer.
 ```bash
 pdf-compressor compress input.pdf --output output.pdf --profile balanced --json
 pdf-compressor inspect a.pdf [b.pdf ...] --json
-pdf-compressor assemble --source a=a.pdf --source b=b.pdf --manifest manifest.json --output out.pdf [--compression balanced] [--overwrite] [--json]
+pdf-compressor assemble --source a=a.pdf --source b=b.pdf --manifest manifest.json --output out.pdf [--ocr] [--ocr-language deu+eng] [--no-ocr-rotate-pages] [--compression balanced] [--overwrite] [--json]
+pdf-compressor ocr input.pdf --output output.pdf [--language deu+eng] [--no-rotate-pages] [--overwrite] [--json]
+pdf-compressor capabilities [--json]
 ```
 
 ### `inspect`
@@ -47,6 +48,29 @@ Assembles a JSON page manifest into a new PDF through the shared core.
   `pageCount`, `outputBytes`, `engine`, `qpdfVersion`, optional
   `ghostscriptVersion`, `warnings`, `compatWarnings`, and per-source
   `sourceHashes`.
+- `--ocr` runs the same mandatory OCR step used by the web app after qpdf
+  assembly. When requested,
+  OCR failure never falls back to an image-only output.
+- Compression profiles are not applied to OCR exports because lossy processing
+  can reduce recognition quality or invalidate the searchable-text contract;
+  the summary reports `no_gain` and a warning when both are selected.
+- `--ocr-language` accepts `deu`, `eng`, or `deu+eng`; `--no-ocr-rotate-pages`
+  disables automatic cardinal rotation. OCR-specific flags require `--ocr`.
+
+### `ocr`
+
+Adds a searchable text layer to one local PDF through the shared `ocrPdf`
+core primitive. Defaults are `deu+eng` and automatic page rotation. OCRmyPDF
+runs in skip mode, so pages that already contain text are preserved. Automatic
+rotation also requires Tesseract's `osd` orientation data. The
+destination has the same no-clobber and explicit `--overwrite` contract as
+the other file-producing commands.
+
+### `capabilities`
+
+Probes qpdf, Ghostscript, OCRmyPDF, Tesseract, and installed Tesseract
+languages without modifying files. Missing optional tools are reported as
+`available: false`; cancellation and timeout remain command failures.
 
 ## Profiles
 
@@ -68,7 +92,11 @@ Successful output includes `ok: true` plus the command payload:
 - `inspect`: `status`, `qpdfVersion`, `sources` (see above).
 - `assemble`: `status`, `outputPath`, `pageCount`, `outputBytes`, `engine`,
   `qpdfVersion`, `ghostscriptVersion` (when used), `warnings`,
-  `compatWarnings`, `sourceHashes`.
+  `compatWarnings`, `sourceHashes`, and `ocr` metadata when OCR is selected.
+- `ocr`: `status`, input/output paths, output size, OCRmyPDF and Tesseract
+  versions, languages, rotation choice, and warnings.
+- `capabilities`: independent availability/version entries for qpdf,
+  Ghostscript, OCRmyPDF, and Tesseract plus installed OCR languages.
 
 Failures include:
 
@@ -82,7 +110,8 @@ Machine-readable `code` values come from the shared core (`CompressionError`
 codes plus the browser-safe manifest codes mapped to `MANIFEST_INVALID`,
 `MANIFEST_INVALID_PAGE`, or `MANIFEST_INVALID_ROTATION`):
 
-- Validation: `INPUT_*`, `OUTPUT_*`, `MANIFEST_*` (unknown source, duplicate
+- Validation: `INPUT_*`, `OUTPUT_*`, `MANIFEST_*`, `OCR_LANGUAGE_UNAVAILABLE`,
+  `OCR_OPTIONS_INVALID` (unknown source, duplicate
   source, bad page, bad rotation, empty manifest, existing output, encrypted,
   signed, or active-content inputs).
 - Native/engine: `ENGINE_*`, `INSPECTION_INCOMPLETE`,
@@ -91,7 +120,8 @@ codes plus the browser-safe manifest codes mapped to `MANIFEST_INVALID`,
 ## Exit Codes
 
 - `0`: success
-- `2`: validation failure (`INPUT_*`, `OUTPUT_*`, `MANIFEST_*`)
+- `2`: validation failure (`INPUT_*`, `OUTPUT_*`, `MANIFEST_*`,
+  `OCR_LANGUAGE_UNAVAILABLE`, `OCR_OPTIONS_INVALID`)
 - `3`: engine or native failure (`ENGINE_*`, `INSPECTION_INCOMPLETE`,
   `NATIVE_VERSION_UNSUPPORTED`, `PUBLISH_FAILED`)
 - `4`: cancellation or timeout (`JOB_CANCELLED`, `JOB_TIMEOUT`)

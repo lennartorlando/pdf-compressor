@@ -12,6 +12,7 @@ import {
   floors,
   meetsFloor,
   parseGhostscriptVersion,
+  parseOcrMyPdfVersion,
   parseQpdfVersion
 } from "../../scripts/check-native-versions.mjs";
 import {
@@ -24,6 +25,7 @@ import {
 } from "../../scripts/benchmark-page-editor.mjs";
 import {
   GHOSTSCRIPT_SECURITY_FLOOR as BUILT_GS_FLOOR,
+  OCRMY_PDF_FEATURE_FLOOR as BUILT_OCR_FLOOR,
   QPDF_SECURITY_FLOOR as BUILT_QPDF_FLOOR
 } from "@pdf-compressor/core/native-floors";
 
@@ -86,13 +88,16 @@ describe("release gates: native floors are shared, not duplicated", () => {
   it("reads the single source of truth from the built core", () => {
     expect(floors()).toEqual({
       QPDF_SECURITY_FLOOR: BUILT_QPDF_FLOOR,
-      GHOSTSCRIPT_SECURITY_FLOOR: BUILT_GS_FLOOR
+      GHOSTSCRIPT_SECURITY_FLOOR: BUILT_GS_FLOOR,
+      OCRMY_PDF_FEATURE_FLOOR: BUILT_OCR_FLOOR
     });
     expect(BUILT_QPDF_FLOOR).toBe("12.4.1");
     expect(BUILT_GS_FLOOR).toBe("10.07.1");
+    expect(BUILT_OCR_FLOOR).toBe("17.0.0");
     const source = readFileSync(join(HERE, "..", "..", "scripts", "check-native-versions.mjs"), "utf8");
     expect(source).not.toMatch(/const QPDF_SECURITY_FLOOR = "/);
     expect(source).not.toMatch(/const GHOSTSCRIPT_SECURITY_FLOOR = "/);
+    expect(source).not.toMatch(/const OCRMY_PDF_FEATURE_FLOOR = "/);
   });
 
   it("parses real tool output and enforces floors", () => {
@@ -100,6 +105,9 @@ describe("release gates: native floors are shared, not duplicated", () => {
     expect(parseQpdfVersion("garbage")).toBeNull();
     expect(parseGhostscriptVersion("10.07.1\n")).toBe("10.07.1");
     expect(parseGhostscriptVersion("nope")).toBeNull();
+    expect(parseOcrMyPdfVersion("17.11.0\n")).toBe("17.11.0");
+    expect(parseOcrMyPdfVersion("ocrmypdf 17.11.0")).toBe("17.11.0");
+    expect(parseOcrMyPdfVersion("nope")).toBeNull();
     expect(meetsFloor("12.4.1", BUILT_QPDF_FLOOR)).toBe(true);
     expect(meetsFloor("11.9.0", BUILT_QPDF_FLOOR)).toBe(false);
   });

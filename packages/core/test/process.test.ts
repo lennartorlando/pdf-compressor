@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -53,6 +53,20 @@ describe("hardened native process wrapper", () => {
       expect(result.stdout).toBe("absent");
     } finally {
       delete process.env["PDF_COMPRESSOR_TEST_SECRET"];
+    }
+  });
+
+  it("pins native scratch files to the supplied private directory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pdf-process-private-temp-"));
+    try {
+      const result = await runProcess(
+        NODE,
+        ["-e", "process.stdout.write(JSON.stringify({cwd:process.cwd(),tmp:process.env.TMPDIR,temp:process.env.TEMP}))"],
+        { cwd: dir, tempDir: dir }
+      );
+      expect(JSON.parse(result.stdout)).toEqual({ cwd: await realpath(dir), tmp: dir, temp: dir });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 
