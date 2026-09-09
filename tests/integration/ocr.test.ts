@@ -34,7 +34,8 @@ async function supportsRealOcr(): Promise<boolean> {
 
 async function extractText(path: string): Promise<string> {
   const bytes = new Uint8Array(await readFile(path));
-  const document = await getDocument({ data: bytes, disableWorker: true }).promise;
+  const loadingTask = getDocument({ data: bytes, disableWorker: true });
+  const document = await loadingTask.promise;
   try {
     const page = await document.getPage(1);
     const content = await page.getTextContent();
@@ -44,7 +45,7 @@ async function extractText(path: string): Promise<string> {
       .replace(/\s+/g, " ")
       .trim();
   } finally {
-    await document.destroy();
+    await loadingTask.destroy();
   }
 }
 
