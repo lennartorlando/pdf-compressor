@@ -453,6 +453,11 @@ describe("page export route", () => {
 
   it.each([
     [
+      "NATIVE_VERSION_UNSUPPORTED",
+      "qpdf 11.9.1 is below the supported floor",
+      "A required local PDF tool is too old. Update it and try again."
+    ],
+    [
       "OCR_LANGUAGE_UNAVAILABLE",
       "German language data is missing",
       "The selected OCR language data is unavailable. Install it and try again."

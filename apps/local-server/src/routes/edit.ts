@@ -188,6 +188,9 @@ function sanitizeExportError(error: unknown): { status: number; code: string } {
 function exportFailureMessage(mapped: { status: number; code: string }): string {
   if (mapped.status === 499) return "Export was cancelled.";
   if (mapped.status === 504) return "Export exceeded its runtime budget.";
+  if (mapped.code === "NATIVE_VERSION_UNSUPPORTED") {
+    return "A required local PDF tool is too old. Update it and try again.";
+  }
   if (mapped.code === "ENGINE_UNAVAILABLE") {
     return "A required local PDF tool is unavailable. Check your local setup and try again.";
   }
