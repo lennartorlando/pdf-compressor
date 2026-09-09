@@ -458,6 +458,31 @@ describe("editor flow", () => {
     expect((editor.element.querySelector(".exportrow .button") as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it("shows an actionable OCR dependency error from the server", async () => {
+    const fake = createFakeLoader([1]);
+    installFetch({
+      onExport: () =>
+        jsonResponse({
+          ok: false,
+          code: "OCR_LANGUAGE_UNAVAILABLE",
+          message: "The selected OCR language data is unavailable. Install it and try again."
+        }, 503)
+    });
+    const editor = createPageEditor({ onExit: () => undefined, loader: fake.loader });
+    document.body.append(editor.element);
+    await addTestFiles(editor.element, [makePdfFile("scan.pdf", 500)]);
+    editor.element.querySelector<HTMLInputElement>('input[name="export-ocr"]')!.click();
+    await tick();
+
+    clickButton(editor.element, ".exportrow .button");
+    await tick(10);
+
+    expect(editor.element.textContent).toContain(
+      "The selected OCR language data is unavailable. Install it and try again."
+    );
+    expect(thumbCards(editor.element)).toHaveLength(1);
+  });
+
   it("rejects over-limit input before PDF.js allocation and cleans up removed sources", async () => {
     const fake = createFakeLoader([1, 1]);
     installFetch();

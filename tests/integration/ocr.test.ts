@@ -5,20 +5,21 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { assemblePages } from "@pdf-compressor/core";
+import {
+  assemblePages,
+  inspectOcrCapabilities
+} from "@pdf-compressor/core";
 import { createManifest } from "@pdf-compressor/core/page-manifest";
 
 const execFileAsync = promisify(execFile);
 
 async function supportsRealOcr(): Promise<boolean> {
   try {
-    const [{ stdout: version }, { stdout: languages }] = await Promise.all([
-      execFileAsync("ocrmypdf", ["--version"]),
-      execFileAsync("tesseract", ["--list-langs"])
+    await Promise.all([
+      inspectOcrCapabilities({ languages: ["deu", "eng"], autoRotate: true }),
+      execFileAsync("gs", ["--version"])
     ]);
-    const installed = new Set(languages.split(/\r?\n/).map((language) => language.trim()));
-    return /(?:^|\s)(?:1[7-9]|[2-9]\d)\.\d+\.\d+(?:\s|$)/.test(version) &&
-      ["deu", "eng", "osd"].every((language) => installed.has(language));
+    return true;
   } catch {
     return false;
   }

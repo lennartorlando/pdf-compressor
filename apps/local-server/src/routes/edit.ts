@@ -185,6 +185,18 @@ function sanitizeExportError(error: unknown): { status: number; code: string } {
   return { status: 500, code: "EXPORT_FAILED" };
 }
 
+function exportFailureMessage(mapped: { status: number; code: string }): string {
+  if (mapped.status === 499) return "Export was cancelled.";
+  if (mapped.status === 504) return "Export exceeded its runtime budget.";
+  if (mapped.code === "ENGINE_UNAVAILABLE") {
+    return "A required local PDF tool is unavailable. Check your local setup and try again.";
+  }
+  if (mapped.code === "OCR_LANGUAGE_UNAVAILABLE") {
+    return "The selected OCR language data is unavailable. Install it and try again.";
+  }
+  return mapped.status >= 500 ? "Export failed." : "Export was rejected.";
+}
+
 function compressionFromUrl(url: URL): CompressionProfileName | null {
   const value = url.searchParams.get("compression");
   if (value === null || value === "none") return null;
@@ -416,14 +428,6 @@ async function runExportWork(
       error = new CompressionError("JOB_TIMEOUT", "Export exceeded its runtime budget.");
     }
     const mapped = sanitizeExportError(error);
-    const message =
-      mapped.status === 499
-        ? "Export was cancelled."
-        : mapped.status === 504
-          ? "Export exceeded its runtime budget."
-          : mapped.status >= 500
-            ? "Export failed."
-            : "Export was rejected.";
-    return fail(mapped.status, mapped.code, message);
+    return fail(mapped.status, mapped.code, exportFailureMessage(mapped));
   }
 }
