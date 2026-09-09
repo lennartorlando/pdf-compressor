@@ -33,10 +33,13 @@ function runnerOf(options: NativeCallOptions): NativeRunner {
 
 export async function getOcrMyPdfVersion(options: NativeCallOptions = {}): Promise<string> {
   const result = await runnerOf(options)("ocrmypdf", ["--version"], childOptions(options));
-  const match = /(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/.exec(result.stdout.trim());
+  const match = [result.stderr, result.stdout]
+    .map((output) => /(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/.exec(output.trim()))
+    .find((candidate) => candidate !== null);
   if (!match) {
     throw new CompressionError("INSPECTION_INCOMPLETE", "Could not determine the OCRmyPDF version.", {
-      stdout: result.stdout.slice(0, 500)
+      stdout: result.stdout.slice(0, 500),
+      stderr: result.stderr.slice(0, 500)
     });
   }
   const version = match[1];

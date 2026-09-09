@@ -2,6 +2,9 @@ import { stat } from "node:fs/promises";
 import { CompressionError } from "./errors.js";
 import type { NativeCallOptions } from "./engines/qpdf-pages.js";
 
+const OUTPUT_POLL_INTERVAL_MS = 25;
+const RESOURCE_POLL_INTERVAL_MS = 250;
+
 /** Monitor a native candidate and translate the local size abort into its public error. */
 export async function withOutputLimit<T, C extends NativeCallOptions>(
   candidatePath: string,
@@ -23,19 +26,28 @@ export async function withOutputLimit<T, C extends NativeCallOptions>(
   let active = true;
   let exceeded = false;
   let resourceError: unknown;
-  let checkInFlight: Promise<void> | null = null;
-  const check = (): Promise<void> => {
-    if (checkInFlight) return checkInFlight;
-    checkInFlight = Promise.all([
-      maxOutputBytes === undefined ? Promise.resolve(null) : stat(candidatePath).catch(() => null),
-      resourceCheck?.()
-    ])
-      .then(([candidateStat]) => {
-        if (active && candidateStat && maxOutputBytes !== undefined && candidateStat.size > maxOutputBytes) {
+  let outputCheckInFlight: Promise<void> | null = null;
+  let resourceCheckInFlight: Promise<void> | null = null;
+  const checkOutput = (): Promise<void> => {
+    if (maxOutputBytes === undefined) return Promise.resolve();
+    if (outputCheckInFlight) return outputCheckInFlight;
+    outputCheckInFlight = stat(candidatePath)
+      .catch(() => null)
+      .then((candidateStat) => {
+        if (active && candidateStat && candidateStat.size > maxOutputBytes) {
           exceeded = true;
           controller.abort();
         }
       })
+      .finally(() => {
+        outputCheckInFlight = null;
+      });
+    return outputCheckInFlight;
+  };
+  const checkResource = (): Promise<void> => {
+    if (!resourceCheck) return Promise.resolve();
+    if (resourceCheckInFlight) return resourceCheckInFlight;
+    resourceCheckInFlight = resourceCheck()
       .catch((error: unknown) => {
         if (active) {
           resourceError = error;
@@ -43,15 +55,21 @@ export async function withOutputLimit<T, C extends NativeCallOptions>(
         }
       })
       .finally(() => {
-        checkInFlight = null;
+        resourceCheckInFlight = null;
       });
-    return checkInFlight;
+    return resourceCheckInFlight;
   };
-  const watcher = setInterval(() => void check(), 25);
-  watcher.unref?.();
+  const outputWatcher = maxOutputBytes === undefined
+    ? undefined
+    : setInterval(() => void checkOutput(), OUTPUT_POLL_INTERVAL_MS);
+  const resourceWatcher = resourceCheck === undefined
+    ? undefined
+    : setInterval(() => void checkResource(), RESOURCE_POLL_INTERVAL_MS);
+  outputWatcher?.unref?.();
+  resourceWatcher?.unref?.();
   try {
     const result = await operation({ ...calls, signal });
-    await check();
+    await Promise.all([checkOutput(), checkResource()]);
     if (resourceError) throw resourceError;
     if (exceeded) throw outputTooLarge(candidatePath, maxOutputBytes!);
     return result;
@@ -61,6 +79,7 @@ export async function withOutputLimit<T, C extends NativeCallOptions>(
     throw error;
   } finally {
     active = false;
-    clearInterval(watcher);
+    if (outputWatcher) clearInterval(outputWatcher);
+    if (resourceWatcher) clearInterval(resourceWatcher);
   }
 }

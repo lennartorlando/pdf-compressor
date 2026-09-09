@@ -70,6 +70,12 @@ describe("OCRmyPDF adapter", () => {
     await expect(getTesseractLanguages({ run })).resolves.toEqual(["deu", "eng", "osd"]);
   });
 
+  it("parses the OCRmyPDF version when the tool writes it to stderr", async () => {
+    const run: NativeRunner = async () => okResult("", "17.11.0\n");
+
+    await expect(getOcrMyPdfVersion({ run })).resolves.toBe("17.11.0");
+  });
+
   it("rejects OCRmyPDF below the mode-skip feature floor", async () => {
     const run: NativeRunner = async () => okResult("16.12.0");
     await expect(getOcrMyPdfVersion({ run })).rejects.toMatchObject({

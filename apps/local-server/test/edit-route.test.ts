@@ -451,7 +451,18 @@ describe("page export route", () => {
     }
   });
 
-  it("maps missing OCR language data to 503 and cleans up the upload", async () => {
+  it.each([
+    [
+      "OCR_LANGUAGE_UNAVAILABLE",
+      "German language data is missing",
+      "The selected OCR language data is unavailable. Install it and try again."
+    ],
+    [
+      "ENGINE_UNAVAILABLE",
+      "OCRmyPDF is missing",
+      "A required local PDF tool is unavailable. Check your local setup and try again."
+    ]
+  ] as const)("maps %s to an actionable 503 and cleans up the upload", async (code, detail, message) => {
     const auth = await launch();
     await jobs.sweepStartupOrphans();
     const before = await readdir(jobs.tempRoot);
@@ -461,7 +472,7 @@ describe("page export route", () => {
       { name: "source", filename: "source.pdf", contentType: "application/pdf", data: fixtureA }
     ]);
     const assemble = vi.spyOn(core, "assemblePages").mockRejectedValueOnce(
-      new core.CompressionError("OCR_LANGUAGE_UNAVAILABLE", "German language data is missing")
+      new core.CompressionError(code, detail)
     );
     try {
       const result = await call("/api/pages/export?ocr=deu&ocrAutoRotate=true", {
@@ -475,7 +486,8 @@ describe("page export route", () => {
       expect(result.status).toBe(503);
       expect(JSON.parse(result.body.toString("utf8"))).toMatchObject({
         ok: false,
-        code: "OCR_LANGUAGE_UNAVAILABLE"
+        code,
+        message
       });
       expect(await readdir(jobs.tempRoot)).toEqual(before);
       expect(jobs.tryAcquireNative()).toBe(true);
