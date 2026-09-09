@@ -107,6 +107,7 @@ describe("release gates: native floors are shared, not duplicated", () => {
     expect(parseGhostscriptVersion("nope")).toBeNull();
     expect(parseOcrMyPdfVersion("17.11.0\n")).toBe("17.11.0");
     expect(parseOcrMyPdfVersion("ocrmypdf 17.11.0")).toBe("17.11.0");
+    expect(parseOcrMyPdfVersion("", "17.11.0\n")).toBe("17.11.0");
     expect(parseOcrMyPdfVersion("nope")).toBeNull();
     expect(meetsFloor("12.4.1", BUILT_QPDF_FLOOR)).toBe(true);
     expect(meetsFloor("11.9.0", BUILT_QPDF_FLOOR)).toBe(false);
