@@ -33,8 +33,11 @@ process-group termination.
   page-selection assembly mutation per export.
 - Ghostscript (>= 10.07.1, optional) creates post-assembly compression
   candidates that only win when smaller and valid.
+- OCRmyPDF (>= 17.0.0, optional) and Tesseract add a searchable text layer.
+  They run in the job's private working and temporary directory. Only `deu`
+  and `eng` are accepted, and requested language data must be installed.
 
-Versions below either floor fail closed. Native parsing still runs with
+Versions below a declared floor fail closed. Native parsing still runs with
 the user account's filesystem authority unless packaging adds OS
 isolation; upstream parser/resource-exhaustion fixes are pending a later
 release.

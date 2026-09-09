@@ -67,7 +67,8 @@ export function exitCodeFor(error: unknown): number {
   if (
     error.code.startsWith("INPUT_") ||
     error.code.startsWith("OUTPUT_") ||
-    error.code.startsWith("MANIFEST_")
+    error.code.startsWith("MANIFEST_") ||
+    error.code.startsWith("OCR_")
   ) {
     return exitCodes.validationFailure;
   }

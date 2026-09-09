@@ -19,8 +19,16 @@ import {
   defaultNativeRunner
 } from "./engines/qpdf-pages.js";
 import { ghostscriptArgs } from "./engines/ghostscript.js";
+import { runOcrMyPdf } from "./engines/ocrmypdf.js";
+import {
+  normalizeOcrOptions,
+  ocrMetadata,
+  type OcrMetadata,
+  type OcrOptions
+} from "./ocr.js";
 import { getCompressionProfile, type CompressionProfileName } from "./profiles.js";
 import { createTempWorkspace } from "./temp-workspace.js";
+import { withOutputLimit } from "./output-limit.js";
 import { assertFreshDestination, validateAndHashPdfInput, validatePdfInput } from "./validation.js";
 import {
   isValidSourceId,
@@ -48,10 +56,16 @@ export interface AssemblePagesOptions {
   destinationPath: string;
   /** Existing Ghostscript compression profile, applied only after assembly. */
   compression?: CompressionProfileName | null;
+  /** Required OCR stage after assembly; compression is skipped when selected. */
+  ocr?: OcrOptions | null;
   signal?: AbortSignal;
   timeoutMs?: number;
   /** Abort qpdf/Ghostscript candidate creation when the file exceeds this cap. */
   maxOutputBytes?: number;
+  /** Parent for private assembly/OCR scratch files. */
+  workspaceParent?: string;
+  /** Live aggregate quota/free-space check invoked while native work runs. */
+  resourceCheck?: (additionalBytes?: number) => Promise<void>;
   /** Injectable native runner (tests count calls or simulate failures). */
   run?: NativeRunner;
 }
@@ -61,9 +75,11 @@ export interface AssemblySummary {
   outputPath: string;
   pageCount: number;
   outputBytes: number;
-  engine: "qpdf" | "ghostscript";
+  engine: "qpdf" | "ocrmypdf" | "ghostscript";
   qpdfVersion: string;
   ghostscriptVersion?: string;
+  /** Structured proof of the mandatory final OCR stage when selected. */
+  ocr?: OcrMetadata;
   warnings: string[];
   compatWarnings: CompatWarningKind[];
   /** sha256 per source id, proving inputs were read (never rewritten). */
@@ -230,66 +246,12 @@ function union<T>(lists: T[][]): T[] {
   return [...seen];
 }
 
-type PageCalls = ReturnType<typeof callOptions>;
-
 function outputTooLarge(path: string, maxOutputBytes: number): CompressionError {
   return new CompressionError(
     "OUTPUT_TOO_LARGE",
     `Output candidate exceeded the ${maxOutputBytes} byte cap.`,
     { outputPath: path, maxOutputBytes }
   );
-}
-
-/** Monitor an actively written native candidate and translate our local abort into a size error. */
-async function withCandidateLimit<T>(
-  candidatePath: string,
-  calls: PageCalls,
-  maxOutputBytes: number | undefined,
-  operation: (limitedCalls: PageCalls) => Promise<T>
-): Promise<T> {
-  if (maxOutputBytes === undefined) return operation(calls);
-  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1) {
-    throw new CompressionError("OUTPUT_TOO_LARGE", "Output byte cap must be a positive integer.", {
-      maxOutputBytes
-    });
-  }
-
-  const controller = new AbortController();
-  const signal = calls.signal
-    ? AbortSignal.any([calls.signal, controller.signal])
-    : controller.signal;
-  let active = true;
-  let exceeded = false;
-  let checkInFlight: Promise<void> | null = null;
-  const check = (): Promise<void> => {
-    if (checkInFlight) return checkInFlight;
-    checkInFlight = stat(candidatePath)
-      .then((candidateStat) => {
-        if (active && candidateStat.size > maxOutputBytes) {
-          exceeded = true;
-          controller.abort();
-        }
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        checkInFlight = null;
-      });
-    return checkInFlight;
-  };
-  const watcher = setInterval(() => void check(), 25);
-  watcher.unref?.();
-  try {
-    const result = await operation({ ...calls, signal });
-    await check();
-    if (exceeded) throw outputTooLarge(candidatePath, maxOutputBytes);
-    return result;
-  } catch (error) {
-    if (exceeded) throw outputTooLarge(candidatePath, maxOutputBytes);
-    throw error;
-  } finally {
-    active = false;
-    clearInterval(watcher);
-  }
 }
 
 const OPTIONAL_COMPRESSION_FAILURE_CODES = new Set<CompressionError["code"]>([
@@ -313,6 +275,7 @@ function isOptionalCompressionFailure(error: unknown): error is CompressionError
  */
 export async function assemblePages(options: AssemblePagesOptions): Promise<AssemblySummary> {
   assertNotAborted(options.signal);
+  const normalizedOcr = options.ocr ? normalizeOcrOptions(options.ocr) : null;
   const bound = normalizeBindings(options.sources);
   assertManifestSemantics(options.manifest, bound);
   const referencedIds = new Set(options.manifest.pages.map((entry) => entry.sourceId));
@@ -359,15 +322,16 @@ export async function assemblePages(options: AssemblePagesOptions): Promise<Asse
 
   const profile = options.compression ? getCompressionProfile(options.compression) : null;
 
-  const workspace = await createTempWorkspace("pdf-pages-");
+  const workspace = await createTempWorkspace("pdf-pages-", options.workspaceParent);
   const stagingPath = join(dirname(options.destinationPath), `.pdf-pages-staging-${randomUUID()}.pdf`);
   try {
     const candidatePath = workspace.file(`assembly-${randomUUID()}.pdf`);
     const primaryPath = referencedSources.length === 1 ? referencedSources[0].path : null;
-    const mutationWarnings = await withCandidateLimit(
+    const mutationWarnings = await withOutputLimit(
       candidatePath,
       calls,
       options.maxOutputBytes,
+      outputTooLarge,
       (limitedCalls) => runQpdfAssemblyMutation(
         {
           primaryPath,
@@ -376,18 +340,45 @@ export async function assemblePages(options: AssemblePagesOptions): Promise<Asse
           candidatePath
         },
         limitedCalls
-      )
+      ),
+      options.resourceCheck
     );
 
-    const finalInspection = await validatePdfArtifact(candidatePath, options.manifest.pages.length, calls);
-    const warnings = [...inspectionWarnings, ...mutationWarnings, ...finalInspection.warnings];
+    const assemblyInspection = await validatePdfArtifact(candidatePath, options.manifest.pages.length, calls);
+    const warnings = [...inspectionWarnings, ...mutationWarnings, ...assemblyInspection.warnings];
 
     let chosenPath = candidatePath;
-    let engine: "qpdf" | "ghostscript" = "qpdf";
+    let engine: "qpdf" | "ocrmypdf" | "ghostscript" = "qpdf";
     let status: "success" | "no_gain" = "success";
     let ghostscriptVersion: string | undefined;
+    let ocr: OcrMetadata | undefined;
 
-    if (profile) {
+    if (normalizedOcr) {
+      const ocrCandidate = workspace.file(`ocr-${randomUUID()}.pdf`);
+      const ocrResult = await withOutputLimit(
+        ocrCandidate,
+        calls,
+        options.maxOutputBytes,
+        outputTooLarge,
+        (limitedCalls) => runOcrMyPdf(chosenPath, ocrCandidate, normalizedOcr, {
+          ...limitedCalls,
+          workspacePath: workspace.path
+        }),
+        options.resourceCheck
+      );
+      const ocrInspection = await validatePdfArtifact(ocrCandidate, options.manifest.pages.length, calls);
+      warnings.push(...ocrResult.warnings, ...ocrInspection.warnings);
+      chosenPath = ocrCandidate;
+      engine = "ocrmypdf";
+      ocr = ocrMetadata(ocrResult, normalizedOcr);
+    }
+
+    if (profile && normalizedOcr) {
+      status = "no_gain";
+      warnings.push(
+        `Profile "${profile.name}" was not applied because compression is disabled for searchable OCR exports.`
+      );
+    } else if (profile) {
       if (!profile.lossy) {
         status = "no_gain";
         warnings.push(
@@ -398,15 +389,17 @@ export async function assemblePages(options: AssemblePagesOptions): Promise<Asse
         try {
           ghostscriptVersion = await getGhostscriptVersion(calls);
           assertNativeFloor("gs", ghostscriptVersion, GHOSTSCRIPT_SECURITY_FLOOR);
-          const gsResult = await withCandidateLimit(
+          const gsResult = await withOutputLimit(
             compressedCandidate,
             calls,
             options.maxOutputBytes,
+            outputTooLarge,
             (limitedCalls) => limitedCalls.run(
               "gs",
-              ghostscriptArgs(compressedCandidate, profile, candidatePath),
+              ghostscriptArgs(compressedCandidate, profile, chosenPath),
               { signal: limitedCalls.signal, timeoutMs: limitedCalls.timeoutMs }
-            )
+            ),
+            options.resourceCheck
           );
           if (gsResult.stderr) warnings.push(gsResult.stderr);
           const compressedInspection = await validatePdfArtifact(
@@ -416,7 +409,7 @@ export async function assemblePages(options: AssemblePagesOptions): Promise<Asse
           );
           warnings.push(...compressedInspection.warnings);
           const [assemblyStat, compressedStat] = await Promise.all([
-            stat(candidatePath),
+            stat(chosenPath),
             stat(compressedCandidate)
           ]);
           if (compressedStat.size < assemblyStat.size) {
@@ -424,13 +417,13 @@ export async function assemblePages(options: AssemblePagesOptions): Promise<Asse
             engine = "ghostscript";
           } else {
             status = "no_gain";
-            warnings.push("Compression did not reduce file size; delivering the assembled PDF.");
+            warnings.push("Compression did not reduce file size; delivering the pre-compression PDF.");
           }
         } catch (error) {
           if (isOptionalCompressionFailure(error)) {
             status = "no_gain";
             warnings.push(
-              `Optional Ghostscript compression failed (${error.code}); delivering the assembled PDF.`
+              `Optional Ghostscript compression failed (${error.code}); delivering the pre-compression PDF.`
             );
           } else {
             throw error;
@@ -440,7 +433,9 @@ export async function assemblePages(options: AssemblePagesOptions): Promise<Asse
     }
 
     try {
+      await options.resourceCheck?.((await stat(chosenPath)).size);
       await copyFile(chosenPath, stagingPath);
+      await options.resourceCheck?.(0);
       await publishNoClobber(stagingPath, options.destinationPath);
     } finally {
       await rm(stagingPath, { force: true });
@@ -455,6 +450,7 @@ export async function assemblePages(options: AssemblePagesOptions): Promise<Asse
       engine,
       qpdfVersion,
       ...(ghostscriptVersion ? { ghostscriptVersion } : {}),
+      ...(ocr ? { ocr } : {}),
       warnings,
       compatWarnings,
       sourceHashes

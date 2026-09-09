@@ -191,6 +191,36 @@ describe("parseAssembleArgs", () => {
       ]).sources
     ).toEqual([{ id: "a", path: "folder/name=revision.pdf" }]);
   });
+
+  it("parses OCR as an optional post-assembly stage", () => {
+    expect(
+      parseAssembleArgs([
+        "--source", "a=a.pdf", "--manifest", "m.json", "--output", "o.pdf",
+        "--ocr", "--ocr-language", "eng", "--no-ocr-rotate-pages"
+      ]).ocr
+    ).toEqual({ languages: ["eng"], autoRotate: false });
+  });
+
+  it("rejects OCR options unless the OCR stage is enabled", () => {
+    expect(() => parseAssembleArgs([
+      "--source", "a=a.pdf", "--manifest", "m.json", "--output", "o.pdf",
+      "--ocr-language", "eng"
+    ])).toThrow("--ocr-language requires --ocr");
+    expect(() => parseAssembleArgs([
+      "--source", "a=a.pdf", "--manifest", "m.json", "--output", "o.pdf",
+      "--no-ocr-rotate-pages"
+    ])).toThrow("--no-ocr-rotate-pages requires --ocr");
+  });
+
+  it("reports invalid OCR languages as a validation failure", async () => {
+    const result = await runAssembleCommand([
+      "--source", "a=a.pdf", "--manifest", "m.json", "--output", "o.pdf",
+      "--ocr", "--ocr-language", "fra", "--json"
+    ]);
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, code: "OCR_OPTIONS_INVALID" });
+    expect(result.stderr).toBe("");
+  });
 });
 
 describe("runAssembleCommand", () => {

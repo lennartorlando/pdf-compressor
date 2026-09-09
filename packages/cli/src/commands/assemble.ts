@@ -6,6 +6,7 @@ import {
   compressionProfiles,
   type CompressionProfileName,
   type NativeRunner,
+  type OcrOptions,
   type PageSourceBinding
 } from "@pdf-compressor/core";
 import {
@@ -14,6 +15,7 @@ import {
   type PageManifest
 } from "@pdf-compressor/core/page-manifest";
 import { withDestinationPublication } from "../destination.js";
+import { parseOcrLanguages } from "./ocr.js";
 import {
   exitCodeFor,
   formatJsonError,
@@ -27,6 +29,7 @@ export interface AssembleCommandOptions {
   manifestPath: string;
   destinationPath: string;
   compression: CompressionProfileName | null;
+  ocr: OcrOptions | null;
   json: boolean;
   overwrite: boolean;
 }
@@ -41,6 +44,11 @@ export function parseAssembleArgs(args: string[]): AssembleCommandOptions {
   let manifestPath: string | undefined;
   let destinationPath: string | undefined;
   let compression: CompressionProfileName | null = null;
+  let ocrEnabled = false;
+  let ocrLanguages = parseOcrLanguages("deu+eng");
+  let ocrAutoRotate = true;
+  let ocrLanguageSpecified = false;
+  let ocrRotationSpecified = false;
   let json = false;
   let overwrite = false;
 
@@ -79,6 +87,21 @@ export function parseAssembleArgs(args: string[]): AssembleCommandOptions {
       json = true;
     } else if (token === "--overwrite") {
       overwrite = true;
+    } else if (token === "--ocr") {
+      ocrEnabled = true;
+    } else if (token === "--ocr-language") {
+      const value = args[++index];
+      if (!value) throw new Error("Missing value for --ocr-language.");
+      ocrLanguages = parseOcrLanguages(value);
+      ocrLanguageSpecified = true;
+    } else if (token.startsWith("--ocr-language=")) {
+      const value = token.slice("--ocr-language=".length);
+      if (!value) throw new Error("Missing value for --ocr-language.");
+      ocrLanguages = parseOcrLanguages(value);
+      ocrLanguageSpecified = true;
+    } else if (token === "--no-ocr-rotate-pages") {
+      ocrAutoRotate = false;
+      ocrRotationSpecified = true;
     } else if (token.startsWith("-")) {
       throw new Error(`Unknown option: ${token}`);
     } else {
@@ -89,7 +112,10 @@ export function parseAssembleArgs(args: string[]): AssembleCommandOptions {
   if (sources.length === 0) throw new Error("Missing --source bindings. Use --source <id>=<path>.");
   if (!manifestPath) throw new Error("Missing --manifest path.");
   if (!destinationPath) throw new Error("Missing --output path.");
-  return { sources, manifestPath, destinationPath, compression, json, overwrite };
+  if (!ocrEnabled && ocrLanguageSpecified) throw new Error("--ocr-language requires --ocr.");
+  if (!ocrEnabled && ocrRotationSpecified) throw new Error("--no-ocr-rotate-pages requires --ocr.");
+  const ocr = ocrEnabled ? { languages: ocrLanguages, autoRotate: ocrAutoRotate } : null;
+  return { sources, manifestPath, destinationPath, compression, ocr, json, overwrite };
 }
 
 function parseSourceBinding(binding: string): PageSourceBinding {
@@ -146,6 +172,12 @@ export async function runAssembleCommand(
   try {
     options = parseAssembleArgs(args);
   } catch (error) {
+    if (error instanceof CompressionError) {
+      if (args.includes("--json")) {
+        return { exitCode: exitCodeFor(error), stdout: formatJsonError(error), stderr: "" };
+      }
+      return { exitCode: exitCodeFor(error), stdout: "", stderr: `${error.message}\n` };
+    }
     if (args.includes("--json")) {
       return usageErrorResult(error);
     }
@@ -171,6 +203,7 @@ export async function runAssembleCommand(
         manifest,
         destinationPath: outputPath,
         compression: options.compression,
+        ocr: options.ocr,
         signal: deps.signal,
         run: deps.run
       })
@@ -203,7 +236,7 @@ export async function runAssembleCommand(
 
 export function assembleUsage(): string {
   return [
-    "Usage: pdf-compressor assemble --source <id>=<path> [--source ...] --manifest <manifest.json> --output <out.pdf> [--compression conservative|balanced|aggressive] [--overwrite] [--json]",
+    "Usage: pdf-compressor assemble --source <id>=<path> [--source ...] --manifest <manifest.json> --output <out.pdf> [--compression conservative|balanced|aggressive] [--ocr] [--ocr-language deu+eng] [--no-ocr-rotate-pages] [--overwrite] [--json]",
     ""
   ].join("\n");
 }

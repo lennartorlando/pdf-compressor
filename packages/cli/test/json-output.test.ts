@@ -55,6 +55,12 @@ describe("JSON output", () => {
     }
   });
 
+  it("maps OCR validation failures to exit 2", () => {
+    for (const code of ["OCR_LANGUAGE_UNAVAILABLE", "OCR_OPTIONS_INVALID"] as const) {
+      expect(exitCodeFor(new CompressionError(code, "OCR validation failed"))).toBe(2);
+    }
+  });
+
   it("maps native failures to exit 3 and cancellation to exit 4", () => {
     for (const code of ["ENGINE_FAILED", "NATIVE_VERSION_UNSUPPORTED", "INSPECTION_INCOMPLETE"] as const) {
       expect(exitCodeFor(new CompressionError(code, "native failure"))).toBe(3);

@@ -5,7 +5,7 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkApiBoundary, isLoopbackHost } from "./api-guard.js";
 import { JobManager } from "./jobs.js";
-import { getCapabilities, handlePageExport, writeJson } from "./routes/edit.js";
+import { CAPABILITY_PROBE_TIMEOUT_MS, getCapabilities, handlePageExport, writeJson } from "./routes/edit.js";
 import { handleCompressRequest } from "./routes/compress.js";
 import { SessionStore, type TokenCheck } from "./session.js";
 
@@ -46,8 +46,26 @@ export interface LocalServerHandle {
 export function createLocalServer(deps: LocalServerDeps = {}): LocalServerHandle {
   const sessions = deps.sessions ?? new SessionStore();
   const jobs = deps.jobs ?? JobManager.createSync();
+  let capabilitySnapshot: { value: Awaited<ReturnType<typeof getCapabilities>>; expiresAt: number } | null = null;
+  let capabilityProbe: Promise<Awaited<ReturnType<typeof getCapabilities>>> | null = null;
+  const capabilities = async (): Promise<Awaited<ReturnType<typeof getCapabilities>>> => {
+    if (capabilitySnapshot && capabilitySnapshot.expiresAt > Date.now()) return capabilitySnapshot.value;
+    if (capabilityProbe) return capabilityProbe;
+    const slot = jobs.acquireNativeSlot();
+    if (!slot) throw new Error("NATIVE_BUSY");
+    capabilityProbe = getCapabilities({}, { timeoutMs: CAPABILITY_PROBE_TIMEOUT_MS })
+      .then((value) => {
+        capabilitySnapshot = { value, expiresAt: Date.now() + 5_000 };
+        return value;
+      })
+      .finally(() => {
+        capabilityProbe = null;
+        slot.release();
+      });
+    return capabilityProbe;
+  };
   const server = createServer((req, res) => {
-    void dispatch(req, res, sessions, jobs).catch(() => {
+    void dispatch(req, res, sessions, jobs, capabilities).catch(() => {
       if (!res.headersSent) {
         writeJson(res, 500, { ok: false, code: "UNKNOWN", message: "Request failed." });
       } else {
@@ -74,7 +92,8 @@ async function dispatch(
   req: IncomingMessage,
   res: ServerResponse,
   sessions: SessionStore,
-  jobs: JobManager
+  jobs: JobManager,
+  capabilities: () => Promise<Awaited<ReturnType<typeof getCapabilities>>>
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   if (!url.pathname.startsWith("/api/")) {
@@ -141,8 +160,15 @@ async function dispatch(
   }
 
   if (req.method === "GET" && url.pathname === "/api/capabilities") {
-    const capabilities = await getCapabilities();
-    writeJson(res, 200, { ok: true, capabilities });
+    try {
+      writeJson(res, 200, { ok: true, capabilities: await capabilities() });
+    } catch (error) {
+      if (error instanceof Error && error.message === "NATIVE_BUSY") {
+        writeJson(res, 429, { ok: false, code: "NATIVE_BUSY", message: "Another native operation is in flight." });
+        return;
+      }
+      throw error;
+    }
     return;
   }
 

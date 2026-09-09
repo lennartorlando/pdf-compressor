@@ -11,11 +11,14 @@ PDF Compressor is local-first.
 
 ## Temporary Files
 
-Compression and page-export jobs use isolated temporary directories.
+Compression, page-export, and OCR jobs use isolated temporary directories.
 
 - The local server streams each uploaded source once into a private
   per-job workspace and never buffers complete multipart uploads in memory.
 - The shared core creates its own per-job workspace for intermediate output.
+- OCRmyPDF and Tesseract receive a private working directory and `TMPDIR`;
+  OCR text and intermediate images stay inside the server-owned job directory,
+  count toward its live storage limits, and are deleted with that workspace.
 - Source input files written by the local server are removed after every
   terminal state; only the validated output is retained.
 - A session-bound output survives interrupted downloads for one retry but
@@ -32,7 +35,8 @@ Compression and page-export jobs use isolated temporary directories.
 ## Known Limits
 
 - Native PDF tools such as `qpdf` (>= 12.4.1, required for page export)
-  or Ghostscript (>= 10.07.1, optional for compression) must be installed
+  or Ghostscript (>= 10.07.1, optional for compression), and OCRmyPDF >= 17
+  with the selected Tesseract languages (optional for OCR), must be installed
   on the user's machine until binary distribution is decided.
 - Password-protected, signed, and active-content PDFs are rejected rather
   than decrypted, repaired, or sanitized.

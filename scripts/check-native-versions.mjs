@@ -8,7 +8,8 @@
  * file; when the core has not been built this gate fails with a clear
  * rebuild instruction instead of checking against stale constants.
  *
- * Behavior: parse actual `qpdf --version` / `gs --version` output
+ * Behavior: parse actual `qpdf --version`, `gs --version`, and optional
+ * `ocrmypdf --version` output
  * robustly, require qpdf, treat Ghostscript as optional (missing gs only
  * disables compression), and fail closed below either floor.
  */
@@ -34,18 +35,24 @@ if (!existsSync(BUILT_FLOORS)) {
 
 let QPDF_SECURITY_FLOOR;
 let GHOSTSCRIPT_SECURITY_FLOOR;
+let OCRMY_PDF_FEATURE_FLOOR;
 try {
   const floors = await import(pathToFileURL(BUILT_FLOORS).href);
   QPDF_SECURITY_FLOOR = floors.QPDF_SECURITY_FLOOR;
   GHOSTSCRIPT_SECURITY_FLOOR = floors.GHOSTSCRIPT_SECURITY_FLOOR;
+  OCRMY_PDF_FEATURE_FLOOR = floors.OCRMY_PDF_FEATURE_FLOOR;
 } catch (error) {
   fail(
     `could not import built native floors (${error instanceof Error ? error.message : String(error)}); ` +
       "run `npm run build` first."
   );
 }
-if (typeof QPDF_SECURITY_FLOOR !== "string" || typeof GHOSTSCRIPT_SECURITY_FLOOR !== "string") {
-  fail("built native floors did not export QPDF_SECURITY_FLOOR / GHOSTSCRIPT_SECURITY_FLOOR strings.");
+if (
+  typeof QPDF_SECURITY_FLOOR !== "string" ||
+  typeof GHOSTSCRIPT_SECURITY_FLOOR !== "string" ||
+  typeof OCRMY_PDF_FEATURE_FLOOR !== "string"
+) {
+  fail("built native floors did not export all required native floor strings.");
 }
 
 function parseTuple(version) {
@@ -73,6 +80,12 @@ export function parseGhostscriptVersion(output) {
   return parseTuple(first) ? first : null;
 }
 
+/** OCRmyPDF prints a semantic version, with or without a tool-name prefix. */
+export function parseOcrMyPdfVersion(output) {
+  const match = /(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/.exec(String(output).trim());
+  return match ? match[1] : null;
+}
+
 export function meetsFloor(found, floor) {
   const a = parseTuple(found);
   const b = parseTuple(floor);
@@ -80,7 +93,7 @@ export function meetsFloor(found, floor) {
 }
 
 export function floors() {
-  return { QPDF_SECURITY_FLOOR, GHOSTSCRIPT_SECURITY_FLOOR };
+  return { QPDF_SECURITY_FLOOR, GHOSTSCRIPT_SECURITY_FLOOR, OCRMY_PDF_FEATURE_FLOOR };
 }
 
 function run(command, args) {
@@ -127,6 +140,24 @@ if (invokedDirectly) {
     if (!meetsFloor(gsVersion, GHOSTSCRIPT_SECURITY_FLOOR)) {
       console.error(
         `check-native-versions: FAIL: Ghostscript ${gsVersion} is below the security floor ${GHOSTSCRIPT_SECURITY_FLOOR}.`
+      );
+      process.exit(1);
+    }
+  }
+
+  const ocrmypdf = await run("ocrmypdf", ["--version"]);
+  if (!ocrmypdf.ok) {
+    console.log("check-native-versions: OCRmyPDF not found; OCR stays disabled (optional).");
+  } else {
+    const ocrVersion = parseOcrMyPdfVersion(ocrmypdf.stdout);
+    if (!ocrVersion) {
+      console.error("check-native-versions: FAIL: could not parse OCRmyPDF version output; failing closed.");
+      process.exit(1);
+    }
+    console.log(`check-native-versions: OCRmyPDF ${ocrVersion} (floor ${OCRMY_PDF_FEATURE_FLOOR})`);
+    if (!meetsFloor(ocrVersion, OCRMY_PDF_FEATURE_FLOOR)) {
+      console.error(
+        `check-native-versions: FAIL: OCRmyPDF ${ocrVersion} is below the feature floor ${OCRMY_PDF_FEATURE_FLOOR}.`
       );
       process.exit(1);
     }

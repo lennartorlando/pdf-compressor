@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { randomBytes } from "node:crypto";
@@ -355,6 +355,131 @@ describe("page export route", () => {
       expect(result.status).toBe(422);
       expect(JSON.parse(result.body.toString("utf8"))).toMatchObject({ ok: false, code: "OUTPUT_TOO_LARGE" });
       expect(await readdir(jobs.tempRoot)).toEqual(before);
+    } finally {
+      assemble.mockRestore();
+    }
+  });
+
+  it("passes OCR to core, returns its structured summary, and retains normal cleanup", async () => {
+    const auth = await launch();
+    await jobs.sweepStartupOrphans();
+    const before = new Set(await readdir(jobs.tempRoot));
+    const manifest = JSON.stringify({ version: 1, pages: [{ sourceId: "a", page: 1 }] });
+    const upload = buildMultipart([
+      { name: "manifest", contentType: "application/json", data: manifest },
+      { name: "source", filename: "source.pdf", contentType: "application/pdf", data: fixtureA }
+    ]);
+    const assemble = vi.spyOn(core, "assemblePages").mockImplementationOnce(async (options) => {
+      expect(options.ocr).toEqual({ languages: ["deu", "eng"], autoRotate: true });
+      expect(options.compression).toBe("balanced");
+      expect(options.workspaceParent).toBe(dirname(options.destinationPath));
+      expect(options.destinationPath.startsWith(`${options.workspaceParent}/`)).toBe(true);
+      expect(options.resourceCheck).toEqual(expect.any(Function));
+      await expect(options.resourceCheck?.()).resolves.toBeUndefined();
+      await writeFile(options.destinationPath, fixtureA);
+      return {
+        status: "success",
+        outputPath: options.destinationPath,
+        pageCount: 1,
+        outputBytes: fixtureA.length,
+        engine: "ocrmypdf",
+        qpdfVersion: "12.4.1",
+        ocr: {
+          engine: "ocrmypdf",
+          version: "17.11.0",
+          tesseractVersion: "5.5.3",
+          languages: ["deu", "eng"],
+          autoRotate: true
+        },
+        warnings: [],
+        compatWarnings: [],
+        sourceHashes: { a: "fake" }
+      };
+    });
+    const ghostscript = vi.spyOn(core, "getGhostscriptVersion").mockRejectedValue(
+      new core.CompressionError("ENGINE_UNAVAILABLE", "Ghostscript missing")
+    );
+    try {
+      const result = await call("/api/pages/export?compression=balanced&ocr=deu%2Beng&ocrAutoRotate=true", {
+        method: "POST",
+        headers: authedHeaders(auth, {
+          "content-type": upload.contentType,
+          "content-length": String(upload.body.length)
+        }),
+        body: upload.body
+      });
+      expect(result.status).toBe(200);
+      expect(JSON.parse(result.body.toString("utf8"))).toMatchObject({
+        ok: true,
+        engine: "ocrmypdf",
+        ocr: {
+          engine: "ocrmypdf",
+          version: "17.11.0",
+          tesseractVersion: "5.5.3",
+          languages: ["deu", "eng"],
+          autoRotate: true
+        }
+      });
+      expect(ghostscript).not.toHaveBeenCalled();
+      const created = (await readdir(jobs.tempRoot)).filter((entry) => !before.has(entry));
+      expect(created).toHaveLength(1);
+      expect(await readdir(join(jobs.tempRoot, created[0]))).toEqual(["output.pdf"]);
+    } finally {
+      assemble.mockRestore();
+      ghostscript.mockRestore();
+    }
+  });
+
+  it("rejects invalid OCR before native work and releases the slot", async () => {
+    const auth = await launch();
+    await jobs.sweepStartupOrphans();
+    const before = await readdir(jobs.tempRoot);
+    const assemble = vi.spyOn(core, "assemblePages");
+    try {
+      const result = await call("/api/pages/export?ocr=fra&ocrAutoRotate=true", {
+        method: "POST",
+        headers: authedHeaders(auth)
+      });
+      expect(result.status).toBe(400);
+      expect(JSON.parse(result.body.toString("utf8"))).toMatchObject({ ok: false, code: "OCR_OPTIONS_INVALID" });
+      expect(assemble).not.toHaveBeenCalled();
+      expect(await readdir(jobs.tempRoot)).toEqual(before);
+      expect(jobs.tryAcquireNative()).toBe(true);
+      jobs.releaseNative();
+    } finally {
+      assemble.mockRestore();
+    }
+  });
+
+  it("maps missing OCR language data to 503 and cleans up the upload", async () => {
+    const auth = await launch();
+    await jobs.sweepStartupOrphans();
+    const before = await readdir(jobs.tempRoot);
+    const manifest = JSON.stringify({ version: 1, pages: [{ sourceId: "a", page: 1 }] });
+    const upload = buildMultipart([
+      { name: "manifest", data: manifest },
+      { name: "source", filename: "source.pdf", contentType: "application/pdf", data: fixtureA }
+    ]);
+    const assemble = vi.spyOn(core, "assemblePages").mockRejectedValueOnce(
+      new core.CompressionError("OCR_LANGUAGE_UNAVAILABLE", "German language data is missing")
+    );
+    try {
+      const result = await call("/api/pages/export?ocr=deu&ocrAutoRotate=true", {
+        method: "POST",
+        headers: authedHeaders(auth, {
+          "content-type": upload.contentType,
+          "content-length": String(upload.body.length)
+        }),
+        body: upload.body
+      });
+      expect(result.status).toBe(503);
+      expect(JSON.parse(result.body.toString("utf8"))).toMatchObject({
+        ok: false,
+        code: "OCR_LANGUAGE_UNAVAILABLE"
+      });
+      expect(await readdir(jobs.tempRoot)).toEqual(before);
+      expect(jobs.tryAcquireNative()).toBe(true);
+      jobs.releaseNative();
     } finally {
       assemble.mockRestore();
     }

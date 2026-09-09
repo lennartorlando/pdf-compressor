@@ -1,15 +1,15 @@
 # Architecture: Lightweight PDF Page Editing (Option B)
 
-Page-level editing only: preview, reorder, rotate, delete, merge, and
-selection export. Content editing (text, images, forms, OCR, redaction,
-signing) is out of scope and has no dependency or extension point here.
+Page-level editing: preview, reorder, rotate, delete, merge, selection export,
+and an optional OCR export step. Direct content editing, redaction, and signing
+remain out of scope.
 
 ## Contracts
 
 - Browser-safe manifest: `@pdf-compressor/core/page-manifest` (opaque
   `sourceId`, one-based `page`, relative `rotate`). Browser `File` objects,
   server temp paths, and CLI paths stay in adapter-owned bindings.
-- Node core: `inspectSources` / `assemblePages` in `packages/core`.
+- Node core: `inspectSources`, `assemblePages`, and `ocrPdf` in `packages/core`.
 - CLI: `inspect` and `assemble` (`docs/architecture/cli-contract.md`).
 - Server: `POST /api/pages/export` (multipart) plus session-bound
   one-time download handles (`apps/local-server/src/routes/edit.ts`).
@@ -17,15 +17,21 @@ signing) is out of scope and has no dependency or extension point here.
 ## Data flow
 
 Local files become PDF.js thumbnails (lazy worker); gestures mutate only
-browser state. Export freezes an immutable snapshot, streams each source
-once to the loopback server, and the core runs exactly one qpdf
-page-selection mutation, optional Ghostscript candidate selection, final
-`qpdf --check` validation, and no-clobber publication.
+browser state. OCR settings are export options and never enter the manifest.
+Export freezes an immutable snapshot, streams each source once to the loopback
+server, and the core runs exactly one qpdf page-selection mutation, validation,
+either optional Ghostscript candidate selection or mandatory OCR, validation,
+and no-clobber publication. Compression is skipped with a `no_gain` warning
+when OCR is selected so recognition quality and the searchable layer stay intact.
 
 ## Boundaries
 
 - qpdf (>= 12.4.1) is required for export; Ghostscript (>= 10.07.1) is
   optional and only used for post-assembly compression candidates.
+- OCRmyPDF (>= 17.0.0), Tesseract language data, and `osd` orientation data
+  for automatic rotation are optional. Selecting OCR
+  makes that step mandatory for the export; missing tools or languages fail
+  clearly instead of returning an unrecognized PDF.
 - Blocked inputs fail closed: encrypted, signed, JavaScript, open or
   additional actions, launch, submit/import, rich media, embedded files.
 - Inert structures (forms, bookmarks, tags, page labels) surface as

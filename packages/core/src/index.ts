@@ -1,5 +1,16 @@
 export { compressPdf, type CompressionOptions, type CompressionSummary } from "./compress.js";
 export { CompressionError, isCompressionError, type CompressionErrorCode } from "./errors.js";
+export {
+  ocrPdf,
+  normalizeOcrOptions,
+  SUPPORTED_OCR_LANGUAGES,
+  DEFAULT_OCR_TIMEOUT_MS,
+  type OcrLanguage,
+  type OcrOptions,
+  type OcrPdfOptions,
+  type OcrSummary,
+  type OcrMetadata
+} from "./ocr.js";
 export { compressionProfiles, getCompressionProfile, type CompressionProfileName, type CompressionProfile } from "./profiles.js";
 export { createTempWorkspace, type TempWorkspace } from "./temp-workspace.js";
 export { validatePdfInput, assertFreshDestination, type PdfValidationResult } from "./validation.js";
@@ -19,7 +30,15 @@ export {
   QPDF_FEATURE_FLOOR,
   QPDF_SECURITY_FLOOR,
   GHOSTSCRIPT_SECURITY_FLOOR,
+  OCRMY_PDF_FEATURE_FLOOR,
 } from "./native-floors.js";
+export {
+  ocrMyPdfArgs,
+  getOcrMyPdfVersion,
+  getTesseractVersion,
+  getTesseractLanguages,
+  inspectOcrCapabilities
+} from "./engines/ocrmypdf.js";
 export {
   NATIVE_PARSER_RISK_NOTE,
   parseVersionTuple,

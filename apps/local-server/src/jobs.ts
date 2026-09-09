@@ -3,6 +3,7 @@ import { chmodSync, Dirent, lstatSync, mkdirSync } from "node:fs";
 import { chmod, lstat, mkdir, readdir, rm, stat, statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { CompressionError } from "@pdf-compressor/core";
 
 /** Initial Safety Limits shared by compression and page export. */
 export const LIMITS = {
@@ -273,6 +274,17 @@ export class JobManager {
       return { ok: false, code: "DISK_RESERVE_EXHAUSTED" };
     }
     return { ok: true };
+  }
+
+  /** Abort in-flight native work as soon as aggregate temp or disk limits are crossed. */
+  async assertRuntimeCapacity(additionalBytes = 0): Promise<void> {
+    const capacity = await this.checkCapacity(additionalBytes);
+    if (!capacity.ok) {
+      throw new CompressionError(
+        capacity.code,
+        "Temporary storage capacity was exhausted during native processing."
+      );
+    }
   }
 
   /**

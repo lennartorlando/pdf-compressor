@@ -15,3 +15,5 @@ export const QPDF_FEATURE_FLOOR = "11.9.0";
 export const QPDF_SECURITY_FLOOR = "12.4.1";
 /** Security floor for the optional Ghostscript compression candidate. */
 export const GHOSTSCRIPT_SECURITY_FLOOR = "10.07.1";
+/** Feature floor: the explicit `--mode skip` OCR contract needs OCRmyPDF 17+. */
+export const OCRMY_PDF_FEATURE_FLOOR = "17.0.0";

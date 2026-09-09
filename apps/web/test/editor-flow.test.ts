@@ -97,7 +97,9 @@ function installFetch(
     ok: true,
     capabilities: {
       qpdf: { available: true, version: "12.4.1" },
-      ghostscript: { available: true, version: "10.0.0" }
+      ghostscript: { available: true, version: "10.0.0" },
+      ocrmypdf: { available: true, version: "17.11.0" },
+      tesseract: { available: true, version: "5.5.3", languages: ["deu", "eng", "osd"] }
     }
   };
   vi.stubGlobal(
@@ -291,6 +293,80 @@ describe("editor flow", () => {
     expect(exportBodies[0].getAll("source")).toHaveLength(1);
     expect(thumbCards(editor.element)).toHaveLength(3);
     expect(editor.element.textContent).toContain("Export ready");
+  });
+
+  it("exports searchable PDFs with both default languages and freezes OCR controls", async () => {
+    const fake = createFakeLoader([2]);
+    let releaseExport!: (response: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      releaseExport = resolve;
+    });
+    const { calls } = installFetch({ onExport: () => gate });
+    const editor = createPageEditor({ onExit: () => undefined, loader: fake.loader });
+    document.body.append(editor.element);
+    await addTestFiles(editor.element, [makePdfFile("scan.pdf", 500)]);
+
+    const toggle = editor.element.querySelector<HTMLInputElement>('input[name="export-ocr"]')!;
+    const german = editor.element.querySelector<HTMLInputElement>('input[value="deu"]')!;
+    const english = editor.element.querySelector<HTMLInputElement>('input[value="eng"]')!;
+    expect(toggle.checked).toBe(false);
+    expect(german.checked).toBe(true);
+    expect(english.checked).toBe(true);
+    toggle.click();
+    await tick();
+    const exportButton = editor.element.querySelector<HTMLButtonElement>(".exportrow .button")!;
+    expect(exportButton.textContent).toBe("Export searchable PDF");
+    exportButton.click();
+    await tick();
+
+    expect(toggle.disabled).toBe(true);
+    expect(german.disabled).toBe(true);
+    expect(english.disabled).toBe(true);
+    const exportCall = calls.find((call) => call.url.startsWith("/api/pages/export"));
+    expect(exportCall?.url).toBe("/api/pages/export?compression=none&ocr=deu%2Beng&ocrAutoRotate=true");
+
+    releaseExport(jsonResponse({
+      ok: true,
+      handle: "h".repeat(32),
+      downloadUrl: `/api/outputs/${"h".repeat(32)}/download`,
+      status: "success",
+      pageCount: 2,
+      outputBytes: 100,
+      engine: "ocrmypdf",
+      ocr: {
+        engine: "ocrmypdf",
+        version: "17.11.0",
+        tesseractVersion: "5.5.3",
+        languages: ["deu", "eng"],
+        autoRotate: true
+      },
+      warnings: [],
+      compatWarnings: []
+    }));
+    await tick(10);
+    expect(toggle.disabled).toBe(false);
+  });
+
+  it("disables searchable export when selected language data is missing", async () => {
+    const fake = createFakeLoader([1]);
+    installFetch({
+      capabilities: {
+        ok: true,
+        capabilities: {
+          qpdf: { available: true, version: "12.4.1" },
+          ghostscript: { available: true, version: "10.07.1" },
+          ocrmypdf: { available: true, version: "17.11.0" },
+          tesseract: { available: true, version: "5.5.3", languages: ["eng"] }
+        }
+      }
+    });
+    const editor = createPageEditor({ onExit: () => undefined, loader: fake.loader });
+    document.body.append(editor.element);
+    await addTestFiles(editor.element, [makePdfFile("scan.pdf", 500)]);
+    editor.element.querySelector<HTMLInputElement>('input[name="export-ocr"]')!.click();
+    await tick();
+    expect(editor.element.querySelector<HTMLButtonElement>(".exportrow .button")!.disabled).toBe(true);
+    expect(editor.element.textContent).toContain("brew install tesseract-lang");
   });
 
   it("freezes controls during export and ignores late gestures", async () => {

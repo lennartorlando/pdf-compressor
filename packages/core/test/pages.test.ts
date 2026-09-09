@@ -39,6 +39,7 @@ function inspectionJson(pageCount: number): string {
 interface FakeState {
   mutations: number;
   gsCalls: number;
+  ocrCalls: number;
   calls: string[][];
   /** Extra bytes the fake gs candidate differs by (negative = smaller). */
   gsDelta: number;
@@ -46,6 +47,8 @@ interface FakeState {
   gsCandidatePages: number | null;
   gsVersion: string;
   gsError?: CompressionError;
+  ocrError?: CompressionError;
+  ocrCandidatePages?: number;
   onMutation?: () => void | Promise<void>;
   failJsonWith?: string;
 }
@@ -67,6 +70,11 @@ function makeFakeRunner(state: FakeState, pagesByPath: Map<string, number>): Nat
     if (command === "gs" && args[0] === "--version") {
       if (state.gsError) throw state.gsError;
       return okResult(state.gsVersion);
+    }
+    if (command === "ocrmypdf" && args[0] === "--version") return okResult("17.11.0");
+    if (command === "tesseract" && args[0] === "--version") return okResult("tesseract 5.5.3");
+    if (command === "tesseract" && args[0] === "--list-langs") {
+      return okResult("List of available languages (3):\ndeu\neng\nosd");
     }
     if (command === "qpdf" && args[0] === "--json") {
       if (state.failJsonWith !== undefined) {
@@ -118,6 +126,15 @@ function makeFakeRunner(state: FakeState, pagesByPath: Map<string, number>): Nat
       pagesByPath.set(output, state.gsCandidatePages ?? inputPages);
       return okResult("");
     }
+    if (command === "ocrmypdf") {
+      if (state.ocrError) throw state.ocrError;
+      state.ocrCalls += 1;
+      const input = args[args.length - 2];
+      const output = args[args.length - 1];
+      await writeFile(output, await readFile(input));
+      pagesByPath.set(output, state.ocrCandidatePages ?? pagesByPath.get(input) ?? 0);
+      return okResult("");
+    }
     throw new Error(`fake: unexpected call ${command} ${args.join(" ")}`);
   };
 }
@@ -164,6 +181,7 @@ function freshState(overrides: Partial<FakeState> = {}): FakeState {
   return {
     mutations: 0,
     gsCalls: 0,
+    ocrCalls: 0,
     calls: [],
     gsDelta: 50,
     gsCandidatePages: null,
@@ -455,6 +473,89 @@ describe("assemblePages validation", () => {
 });
 
 describe("assemblePages candidates", () => {
+  it("requires OCR, validates its candidate, and skips unsafe combined compression", async () => {
+    const setup = await setupTwoSources();
+    const state = freshState({ gsDelta: -32 });
+    try {
+      const summary = await assembleWith(
+        {
+          sources: setup.bindings,
+          destinationPath: join(setup.dir, "out.pdf"),
+          ocr: { languages: ["deu", "eng"], autoRotate: true },
+          compression: "balanced"
+        },
+        state,
+        setup.pagesByPath
+      );
+      expect(state.ocrCalls).toBe(1);
+      expect(state.gsCalls).toBe(0);
+      expect(summary.engine).toBe("ocrmypdf");
+      expect(summary.status).toBe("no_gain");
+      expect(summary.warnings).toContain(
+        'Profile "balanced" was not applied because compression is disabled for searchable OCR exports.'
+      );
+      expect(summary.ocr).toEqual({
+        engine: "ocrmypdf",
+        version: "17.11.0",
+        tesseractVersion: "5.5.3",
+        languages: ["deu", "eng"],
+        autoRotate: true
+      });
+      const ocrIndex = state.calls.findIndex((call) => call[0] === "ocrmypdf" && call[1] !== "--version");
+      const ocrValidationIndex = state.calls.findIndex(
+        (call, index) => index > ocrIndex && call[0] === "qpdf" && call[1] === "--check"
+      );
+      const gsIndex = state.calls.findIndex((call) => call[0] === "gs" && call[1] !== "--version");
+      expect(ocrIndex).toBeGreaterThan(-1);
+      expect(ocrValidationIndex).toBeGreaterThan(ocrIndex);
+      expect(gsIndex).toBe(-1);
+      expect(ocrValidationIndex).toBeGreaterThan(ocrIndex);
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("does not fall back to assembly when selected OCR fails", async () => {
+    const setup = await setupTwoSources();
+    const state = freshState({ ocrError: new CompressionError("ENGINE_FAILED", "OCR failed") });
+    try {
+      await expect(
+        assembleWith(
+          {
+            sources: setup.bindings,
+            destinationPath: join(setup.dir, "out.pdf"),
+            ocr: { languages: ["eng"] }
+          },
+          state,
+          setup.pagesByPath
+        )
+      ).rejects.toMatchObject({ code: "ENGINE_FAILED" });
+      expect(state.gsCalls).toBe(0);
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("rejects an invalid selected OCR candidate", async () => {
+    const setup = await setupTwoSources();
+    const state = freshState({ ocrCandidatePages: 99 });
+    try {
+      await expect(
+        assembleWith(
+          {
+            sources: setup.bindings,
+            destinationPath: join(setup.dir, "out.pdf"),
+            ocr: { languages: ["eng"] }
+          },
+          state,
+          setup.pagesByPath
+        )
+      ).rejects.toMatchObject({ code: "OUTPUT_INVALID" });
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
   it.each([
     "ENGINE_FAILED",
     "ENGINE_UNAVAILABLE",
