@@ -7,6 +7,7 @@ import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   assemblePages,
+  CompressionError,
   inspectOcrCapabilities
 } from "@pdf-compressor/core";
 import { createManifest } from "@pdf-compressor/core/page-manifest";
@@ -20,8 +21,14 @@ async function supportsRealOcr(): Promise<boolean> {
       execFileAsync("gs", ["--version"])
     ]);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (
+      (error instanceof CompressionError && error.code === "ENGINE_UNAVAILABLE") ||
+      (error instanceof Error && "code" in error && error.code === "ENOENT")
+    ) {
+      return false;
+    }
+    throw error;
   }
 }
 
